@@ -39,9 +39,9 @@ import {
   testFirestoreConnection
 } from './services/firestoreService';
 import { signInWithGoogleOAuth } from './services/googleAuthService';
-import { SearchX, Filter, Plus, ShieldCheck, X, Check, Edit3, ShieldAlert, LogOut, FileSpreadsheet, Inbox, Cloud } from 'lucide-react';
+import { SearchX, Filter, Plus, ShieldCheck, X, Check, ShieldAlert, LogOut, Inbox } from 'lucide-react';
 
-// DANH SÁCH ADMIN HARDCODE CỐ ĐỊNH (Khai báo bên ngoài Component để tránh crash)
+// DANH SÁCH ADMIN CỐ ĐỊNH TRONG CODE
 const ADMIN_WHITELIST = [
   'datpt60@fpt.edu.vn',
   'phantiendat221295@gmail.com',
@@ -53,9 +53,9 @@ const ADMIN_WHITELIST = [
 ];
 
 const checkIsOwnerEmail = (email?: string): boolean => {
-  if (!email) return false;
+  if (!email || typeof email !== 'string') return false;
   const clean = email.toLowerCase().trim();
-  return ADMIN_WHITELIST.some(allowedEmail => allowedEmail.toLowerCase().trim() === clean);
+  return ADMIN_WHITELIST.some((allowed) => allowed.toLowerCase().trim() === clean);
 };
 
 export default function App() {
@@ -65,33 +65,32 @@ export default function App() {
       const saved = sessionStorage.getItem('fpt_portal_admin_user');
       if (saved) {
         const parsed = JSON.parse(saved);
-        if (parsed?.email && checkIsOwnerEmail(parsed.email)) {
+        if (parsed && parsed.email && checkIsOwnerEmail(parsed.email)) {
           return parsed;
         }
       }
     } catch {
-      // ignore
+      // Bọc an toàn
     }
     return null;
   });
 
-  // Re-verify session khi trang web load (Đá ngay tài khoản bị xóa khỏi whitelist)
+  // Re-verify session an toàn
   useEffect(() => {
     try {
       const saved = sessionStorage.getItem('fpt_portal_admin_user');
       if (saved) {
-        const parsed: AdminAccount = JSON.parse(saved);
-        if (parsed?.email && !checkIsOwnerEmail(parsed.email)) {
+        const parsed = JSON.parse(saved);
+        if (parsed && parsed.email && !checkIsOwnerEmail(parsed.email)) {
           sessionStorage.removeItem('fpt_portal_admin_user');
           setCurrentAdminUser(null);
         }
       }
     } catch {
-      // ignore
+      // Bọc an toàn
     }
   }, []);
 
-  // Current Role
   const currentRole: 'user' | 'admin' = currentAdminUser ? 'admin' : 'user';
 
   // Data state
@@ -108,16 +107,12 @@ export default function App() {
     return DEFAULT_APPS;
   });
 
-  // Notifications
   const [notifications, setNotifications] = useState<NotificationItem[]>(() => {
     try {
       const cached = localStorage.getItem('fpt_portal_cached_notis');
       if (cached) {
         const parsed = JSON.parse(cached);
-        if (Array.isArray(parsed) && parsed.length > 0) {
-          const isGarbage = parsed.some((n: any) => n.title?.includes('function ') || n.title?.includes('typeof '));
-          if (!isGarbage) return parsed;
-        }
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
       }
     } catch {
       // ignore
@@ -134,29 +129,37 @@ export default function App() {
   });
 
   const [quickTools] = useState<QuickToolItem[]>(DEFAULT_QUICK_TOOLS);
-  const [tickets, setTickets] = useState<SupportTicket[]>(getStoredTickets);
+  const [tickets, setTickets] = useState<SupportTicket[]>(() => {
+    try {
+      return getStoredTickets() || [];
+    } catch {
+      return [];
+    }
+  });
 
-  // Search & Filter state
   const [searchQuery, setSearchQuery] = useState('');
   const [activeTag, setActiveTag] = useState<string>('all');
   const [activeTab, setActiveTab] = useState<'home' | 'roles' | 'tailieu' | 'support'>('home');
   const [selectedCategoryFilter, setSelectedCategoryFilter] = useState<string | null>(null);
 
-  // Sheet config & Sync state
-  const [sheetConfig, setSheetConfig] = useState<GoogleSheetsConfig>(getStoredConfig);
-  const [isSyncing, setIsSyncing] = useState(false);
-  const [lastSyncedTime, setLastSyncedTime] = useState<string | undefined>(sheetConfig.lastSynced);
-  const [syncError, setSyncError] = useState<string | null>(null);
-  const [deletedAppIds, setDeletedAppIds] = useState<string[]>([]);
+  const [sheetConfig, setSheetConfig] = useState<GoogleSheetsConfig>(() => {
+    try {
+      return getStoredConfig() || DEFAULT_SHEET_CONFIG;
+    } catch {
+      return DEFAULT_SHEET_CONFIG;
+    }
+  });
 
-  // Modals
+  const [isSyncing, setIsSyncing] = useState(false);
+  const [lastSyncedTime, setLastSyncedTime] = useState<string | undefined>(sheetConfig?.lastSynced);
+  const [syncError, setSyncError] = useState<string | null>(null);
+
   const [isSheetModalOpen, setIsSheetModalOpen] = useState(false);
   const [isSupportModalOpen, setIsSupportModalOpen] = useState(false);
   const [isGuideModalOpen, setIsGuideModalOpen] = useState(false);
   const [selectedApp, setSelectedApp] = useState<WebAppItem | null>(null);
   const [selectedNotification, setSelectedNotification] = useState<NotificationItem | null>(null);
 
-  // Admin App Editing Modal
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [editingApp, setEditingApp] = useState<WebAppItem | null>(null);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
@@ -166,7 +169,6 @@ export default function App() {
     setTimeout(() => setToastMessage(null), 3500);
   };
 
-  // Google Sheets Sync
   const syncDataFromSheets = async (configToUse = sheetConfig) => {
     setIsSyncing(true);
     setSyncError(null);
@@ -192,9 +194,9 @@ export default function App() {
           }
         } catch (err: any) {
           hasError = true;
-          const msg = err.message?.includes('LINK_REQUIRES_LOGIN')
+          const msg = err?.message?.includes('LINK_REQUIRES_LOGIN')
             ? 'File Google Sheets đang bị khóa quyền riêng tư. Vui lòng kiểm tra quyền chia sẻ công khai ("Bất kỳ ai có liên kết").'
-            : err.message || 'Lỗi tải Webapps từ Google Sheets.';
+            : err?.message || 'Lỗi tải Webapps từ Google Sheets.';
           setSyncError(msg);
         }
       }
@@ -237,40 +239,48 @@ export default function App() {
   useEffect(() => {
     testFirestoreConnection();
 
-    const unsubscribeApps = subscribeApps(async (firestoreApps) => {
-      if (firestoreApps && firestoreApps.length > 0) {
-        setApps(firestoreApps);
-        try {
-          localStorage.setItem('fpt_portal_cached_apps', JSON.stringify(firestoreApps));
-        } catch {
-          // ignore
+    const unsubscribeApps = subscribeApps(
+      async (firestoreApps) => {
+        if (firestoreApps && firestoreApps.length > 0) {
+          setApps(firestoreApps);
+          try {
+            localStorage.setItem('fpt_portal_cached_apps', JSON.stringify(firestoreApps));
+          } catch {
+            // ignore
+          }
+        } else {
+          const seeded = await seedInitialAppsIfEmpty(DEFAULT_APPS);
+          setApps(seeded);
         }
-      } else {
-        const seeded = await seedInitialAppsIfEmpty(DEFAULT_APPS);
-        setApps(seeded);
+      },
+      (err) => {
+        console.warn('Lỗi lắng nghe Firestore apps:', err);
       }
-    }, (err) => {
-      console.warn('Lỗi lắng nghe Firestore apps:', err);
-    });
+    );
 
-    const unsubscribeTickets = subscribeTickets((firestoreTickets) => {
-      if (firestoreTickets) {
-        setTickets(firestoreTickets);
-        try {
-          localStorage.setItem('fpt_portal_cached_tickets', JSON.stringify(firestoreTickets));
-        } catch {
-          // ignore
+    const unsubscribeTickets = subscribeTickets(
+      (firestoreTickets) => {
+        if (firestoreTickets) {
+          setTickets(firestoreTickets);
+          try {
+            localStorage.setItem('fpt_portal_cached_tickets', JSON.stringify(firestoreTickets));
+          } catch {
+            // ignore
+          }
         }
+      },
+      (err) => {
+        console.warn('Lỗi lắng nghe Firestore tickets:', err);
       }
-    }, (err) => {
-      console.warn('Lỗi lắng nghe Firestore tickets:', err);
-    });
+    );
 
-    getPortalConfigFromFirestore().then((cloudConfig) => {
-      if (cloudConfig && (cloudConfig.appsCsvUrl || cloudConfig.notificationsCsvUrl)) {
-        setSheetConfig((prev) => ({ ...prev, ...cloudConfig }));
-      }
-    }).catch(() => null);
+    getPortalConfigFromFirestore()
+      .then((cloudConfig) => {
+        if (cloudConfig && (cloudConfig.appsCsvUrl || cloudConfig.notificationsCsvUrl)) {
+          setSheetConfig((prev) => ({ ...prev, ...cloudConfig }));
+        }
+      })
+      .catch(() => null);
 
     return () => {
       unsubscribeApps();
@@ -295,7 +305,6 @@ export default function App() {
     setNotifications(DEFAULT_NOTIFICATIONS);
     setSheetConfig(DEFAULT_SHEET_CONFIG);
     saveStoredConfig(DEFAULT_SHEET_CONFIG);
-    setDeletedAppIds([]);
     setLastSyncedTime(undefined);
     setSyncError(null);
     try {
@@ -311,7 +320,7 @@ export default function App() {
   };
 
   const handleLoginAdmin = async (email: string, pin: string): Promise<boolean> => {
-    const permissionsUrl = sheetConfig.permissionsCsvUrl || DEFAULT_SHEET_CONFIG.permissionsCsvUrl;
+    const permissionsUrl = sheetConfig?.permissionsCsvUrl || DEFAULT_SHEET_CONFIG.permissionsCsvUrl;
     let accounts: AdminAccount[] = [];
 
     if (permissionsUrl) {
@@ -346,14 +355,14 @@ export default function App() {
   };
 
   const handleLoginWithGoogleOAuth = async (): Promise<boolean> => {
-    const clientId = sheetConfig.googleClientId || '';
+    const clientId = sheetConfig?.googleClientId || '';
     if (!clientId) {
       throw new Error('CLIENT_ID_MISSING: Chưa cấu hình Google OAuth Client ID');
     }
 
     const googleProfile = await signInWithGoogleOAuth(clientId);
 
-    const permissionsUrl = sheetConfig.permissionsCsvUrl || DEFAULT_SHEET_CONFIG.permissionsCsvUrl;
+    const permissionsUrl = sheetConfig?.permissionsCsvUrl || DEFAULT_SHEET_CONFIG.permissionsCsvUrl;
     let accounts: AdminAccount[] = [];
 
     if (permissionsUrl) {
@@ -391,7 +400,7 @@ export default function App() {
   };
 
   const handleLoginWithGoogleEmail = async (googleEmail: string): Promise<boolean> => {
-    const permissionsUrl = sheetConfig.permissionsCsvUrl || DEFAULT_SHEET_CONFIG.permissionsCsvUrl;
+    const permissionsUrl = sheetConfig?.permissionsCsvUrl || DEFAULT_SHEET_CONFIG.permissionsCsvUrl;
     let accounts: AdminAccount[] = [];
 
     if (permissionsUrl) {
@@ -463,7 +472,7 @@ export default function App() {
       showToast(`Lỗi lưu Firestore: ${err?.message || 'Không thể lưu'}`);
     }
 
-    if (sheetConfig.gasWebhookUrl) {
+    if (sheetConfig?.gasWebhookUrl) {
       pushToGasWebhook(sheetConfig.gasWebhookUrl, { action: 'saveApp', app: appWithCustomFlag });
     }
   };
@@ -489,7 +498,7 @@ export default function App() {
       showToast(`Lỗi xóa Firestore: ${err?.message || 'Không thể xóa'}`);
     }
 
-    if (sheetConfig.gasWebhookUrl) {
+    if (sheetConfig?.gasWebhookUrl) {
       pushToGasWebhook(sheetConfig.gasWebhookUrl, { action: 'deleteApp', appId });
     }
   };
@@ -560,9 +569,9 @@ export default function App() {
     return apps.filter((app) => {
       if (searchQuery.trim()) {
         const query = searchQuery.toLowerCase().trim();
-        const matchTitle = app.title.toLowerCase().includes(query);
-        const matchDesc = app.description.toLowerCase().includes(query);
-        const matchCategory = app.category.toLowerCase().includes(query);
+        const matchTitle = app.title?.toLowerCase().includes(query);
+        const matchDesc = app.description?.toLowerCase().includes(query);
+        const matchCategory = app.category?.toLowerCase().includes(query);
         if (!matchTitle && !matchDesc && !matchCategory) {
           return false;
         }
@@ -651,14 +660,14 @@ export default function App() {
             onDeleteApp={handleDeleteApp}
             onResetToDefault={handleResetToDefault}
             onGoToHome={() => setActiveTab('home')}
-            hasPermissionsSheet={Boolean(sheetConfig.permissionsCsvUrl)}
+            hasPermissionsSheet={Boolean(sheetConfig?.permissionsCsvUrl)}
             onOpenSheetConfig={() => setIsSheetModalOpen(true)}
             tickets={tickets}
             onUpdateTicketStatus={handleUpdateTicketStatus}
             onDeleteTicket={handleDeleteTicket}
             onSyncNow={() => syncDataFromSheets(sheetConfig)}
             isSyncing={isSyncing}
-            googleClientId={sheetConfig.googleClientId}
+            googleClientId={sheetConfig?.googleClientId}
             onSaveGoogleClientId={(id) => handleSaveSheetConfig({ ...sheetConfig, googleClientId: id })}
           />
         </main>
