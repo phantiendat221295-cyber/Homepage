@@ -30,6 +30,7 @@ export const GoogleSheetsModal: React.FC<GoogleSheetsModalProps> = ({
   const [appsUrl, setAppsUrl] = useState(config.appsCsvUrl || '');
   const [notisUrl, setNotisUrl] = useState(config.notificationsCsvUrl || '');
   const [permissionsUrl, setPermissionsUrl] = useState(config.permissionsCsvUrl || '');
+  const [gasWebhookUrl, setGasWebhookUrl] = useState(config.gasWebhookUrl || '');
 
   if (!isOpen) return null;
 
@@ -39,6 +40,7 @@ export const GoogleSheetsModal: React.FC<GoogleSheetsModalProps> = ({
       appsCsvUrl: appsUrl.trim(),
       notificationsCsvUrl: notisUrl.trim(),
       permissionsCsvUrl: permissionsUrl.trim(),
+      gasWebhookUrl: gasWebhookUrl.trim(),
       autoSync: true
     });
   };
@@ -46,8 +48,8 @@ export const GoogleSheetsModal: React.FC<GoogleSheetsModalProps> = ({
   const downloadSamplePermissionsCsv = () => {
     const csv =
       "Email,Mật khẩu,Họ tên,Quyền\n" +
-      "admin@fe.edu.vn,123456,Quản trị viên Đào tạo,admin\n" +
-      "daotao.dna@fpt.edu.vn,fpt@2026,Ban Đào Tạo FPT,admin";
+      "admin@fpt.edu.vn,matkhau123,Quản trị viên Đào tạo,admin\n" +
+      "canbo.daotao@fpt.edu.vn,matkhau456,Cán bộ Đào tạo,admin";
     const blob = new Blob(["\uFEFF" + csv], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -198,6 +200,24 @@ export const GoogleSheetsModal: React.FC<GoogleSheetsModalProps> = ({
             />
             <p className="text-[11px] text-slate-500">
               Các cột: <span className="font-semibold text-slate-700">Email, Mật khẩu, Họ tên, Quyền</span> (Chỉ tài khoản ghi ở đây mới đăng nhập được Admin)
+            </p>
+          </div>
+
+          {/* Input 4: Optional Google Apps Script Webhook URL */}
+          <div className="space-y-1.5">
+            <label className="block text-xs sm:text-sm font-bold text-slate-700 flex items-center gap-1.5">
+              <FileSpreadsheet size={14} className="text-emerald-600" />
+              <span>4. Webhook Google Apps Script (Tùy chọn - Ghi trực tiếp 2 chiều vào Google Sheet)</span>
+            </label>
+            <input
+              type="url"
+              value={gasWebhookUrl}
+              onChange={(e) => setGasWebhookUrl(e.target.value)}
+              placeholder="https://script.google.com/macros/s/.../exec"
+              className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5 text-xs sm:text-sm text-slate-800 placeholder-slate-400 focus:bg-white focus:border-emerald-500 focus:outline-none"
+            />
+            <p className="text-[11px] text-slate-500">
+              Khi cấu hình, mọi thay đổi thêm/sửa/xóa trên web sẽ được tự động ghi thẳng vào file Google Sheet của bạn.
             </p>
           </div>
 

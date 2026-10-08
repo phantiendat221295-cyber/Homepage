@@ -50,6 +50,7 @@ export interface GoogleSheetsConfig {
   appsCsvUrl: string;
   notificationsCsvUrl: string;
   permissionsCsvUrl?: string; // Link CSV tab 'PhanQuyen'
+  gasWebhookUrl?: string;     // URL Google Apps Script Web App (Tùy chọn: Đồng bộ 2 chiều trực tiếp vào Sheet)
   lastSynced?: string;
   autoSync: boolean;
   syncError?: string;

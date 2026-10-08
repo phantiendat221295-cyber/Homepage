@@ -11,10 +11,10 @@ const STORAGE_KEYS = {
   LAST_SYNC: 'fpt_portal_last_sync'
 };
 
-// Cloud Shared API endpoint (đảm bảo mọi máy tính truy cập Vercel đều dùng chung cơ sở dữ liệu)
+// Cloud Shared API endpoint (đồng bộ giữa các thiết bị và máy tính truy cập Vercel)
 const CLOUD_CONFIG_URL = 'https://api.restful-api.dev/objects/ff808181a09d98f701a11a16e7991d14';
 
-// 3 đường link Google Sheets chính thức đã xác thực của người dùng
+// 3 đường link Google Sheets chính thức của FPT Poly School Đào Tạo
 export const DEFAULT_SHEET_CONFIG: GoogleSheetsConfig = {
   appsCsvUrl:
     'https://docs.google.com/spreadsheets/d/e/2PACX-1vS9wRadk5MTgUYCiN2NhZbaJiE7U_b8H07p8_8ZVBaBdbuha0QyLXaQ590-dQedY_yEBfolHA2IxW4g/pub?gid=0&single=true&output=csv',
@@ -22,6 +22,7 @@ export const DEFAULT_SHEET_CONFIG: GoogleSheetsConfig = {
     'https://docs.google.com/spreadsheets/d/e/2PACX-1vRBqtfVE6cJfGPnvdIK-cDjQ94h_EHCaCOQfeI0TmIGI0NZ-lviOC6Do27GuZskKEbtVKtWDnqqWKNa/pub?gid=0&single=true&output=csv',
   permissionsCsvUrl:
     'https://docs.google.com/spreadsheets/d/e/2PACX-1vRSCveJeiShAO-1DAeOusENgYe_8dAqx0P6yZvzZZoOX5ZmoSpGaLah-Y_ldUa-_jNMksVh-ig7Vyxe/pub?gid=0&single=true&output=csv',
+  gasWebhookUrl: '',
   lastSynced: undefined,
   autoSync: true
 };
@@ -52,6 +53,14 @@ export const normalizeGoogleSheetUrl = (rawUrl: string): string => {
   return url;
 };
 
+// URL kèm cache busting để triệt tiêu bộ nhớ đệm 5 phút của Google CDN
+export const getCacheBustedUrl = (rawUrl: string): string => {
+  const norm = normalizeGoogleSheetUrl(rawUrl);
+  if (!norm) return '';
+  const sep = norm.includes('?') ? '&' : '?';
+  return `${norm}${sep}_t=${Date.now()}`;
+};
+
 // Lấy cấu hình từ LocalStorage hoặc Default
 export const getStoredConfig = (): GoogleSheetsConfig => {
   try {
@@ -59,7 +68,10 @@ export const getStoredConfig = (): GoogleSheetsConfig => {
     if (raw) {
       const parsed = JSON.parse(raw);
       if (parsed && (parsed.appsCsvUrl || parsed.notificationsCsvUrl)) {
-        return parsed;
+        return {
+          ...DEFAULT_SHEET_CONFIG,
+          ...parsed
+        };
       }
     }
   } catch {
@@ -75,7 +87,6 @@ export const saveCloudData = async (data: {
   tickets?: SupportTicket[];
 }): Promise<void> => {
   try {
-    // Đọc cloud data hiện tại trước để merge
     let currentData: any = {};
     try {
       const r = await fetch(CLOUD_CONFIG_URL);
@@ -93,7 +104,8 @@ export const saveCloudData = async (data: {
         ? {
             appsCsvUrl: data.config.appsCsvUrl,
             notificationsCsvUrl: data.config.notificationsCsvUrl,
-            permissionsCsvUrl: data.config.permissionsCsvUrl
+            permissionsCsvUrl: data.config.permissionsCsvUrl,
+            gasWebhookUrl: data.config.gasWebhookUrl
           }
         : {}),
       ...(data.customApps ? { customApps: data.customApps } : {}),
@@ -121,7 +133,9 @@ export const fetchCloudData = async (): Promise<{
   tickets?: SupportTicket[];
 } | null> => {
   try {
-    const res = await fetch(CLOUD_CONFIG_URL, { cache: 'no-cache' });
+    const res = await fetch(`${CLOUD_CONFIG_URL}?_t=${Date.now()}`, {
+      headers: { 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache' }
+    });
     if (!res.ok) return null;
     const json = await res.json();
     if (!json || !json.data) return null;
@@ -131,6 +145,7 @@ export const fetchCloudData = async (): Promise<{
       appsCsvUrl: d.appsCsvUrl || DEFAULT_SHEET_CONFIG.appsCsvUrl,
       notificationsCsvUrl: d.notificationsCsvUrl || DEFAULT_SHEET_CONFIG.notificationsCsvUrl,
       permissionsCsvUrl: d.permissionsCsvUrl || DEFAULT_SHEET_CONFIG.permissionsCsvUrl,
+      gasWebhookUrl: d.gasWebhookUrl || '',
       autoSync: true
     };
 
@@ -155,7 +170,7 @@ export const saveStoredConfig = (config: GoogleSheetsConfig) => {
 };
 
 // Helper normalize key
-const cleanKey = (key: string) => {
+export const cleanKey = (key: string) => {
   return key
     .toLowerCase()
     .trim()
@@ -194,13 +209,18 @@ const validateCsvContent = (text: string) => {
   }
 };
 
-// 1. FETCH APPS
+// 1. FETCH APPS TRỰC TIẾP TỪ GOOGLE SHEETS (Luôn cập nhật bản mới nhất)
 export const fetchAppsFromCsv = async (rawUrl: string): Promise<WebAppItem[]> => {
-  const csvUrl = normalizeGoogleSheetUrl(rawUrl || DEFAULT_SHEET_CONFIG.appsCsvUrl);
-  if (!csvUrl) return DEFAULT_APPS;
+  const targetUrl = getCacheBustedUrl(rawUrl || DEFAULT_SHEET_CONFIG.appsCsvUrl);
+  if (!targetUrl) return DEFAULT_APPS;
 
   try {
-    const res = await fetch(csvUrl, { cache: 'no-cache' });
+    const res = await fetch(targetUrl, {
+      headers: {
+        'Cache-Control': 'no-cache, no-store, must-revalidate',
+        'Pragma': 'no-cache'
+      }
+    });
     if (!res.ok) throw new Error(`HTTP error ${res.status}`);
     const csvText = await res.text();
     validateCsvContent(csvText);
@@ -251,15 +271,17 @@ export const fetchAppsFromCsv = async (rawUrl: string): Promise<WebAppItem[]> =>
       const category = findVal(['nhom', 'category', 'chuyenmuc', 'phanloai']) || 'Quản lý đào tạo';
       const icon = findVal(['icon', 'bieutuong', 'lucide']) || 'Sparkles';
       const tag = (findVal(['tag', 'the', 'loai']) || 'webapp').toLowerCase();
-      const colorRaw = findVal(['color', 'mau', 'maucard', 'theme']).toLowerCase();
+      const colorRaw = findVal(['color', 'mau', 'mausac', 'maucard', 'theme']).toLowerCase();
 
       const validColors: NonNullable<WebAppItem['colorTheme']>[] = [
         'blue', 'green', 'orange', 'purple', 'pink', 'yellow', 'mint', 'cyan', 'indigo', 'slate'
       ];
       const colorTheme = (validColors.find((c) => colorRaw.includes(c)) || 'blue') as WebAppItem['colorTheme'];
 
+      // Tạo id ổn định theo tiêu đề để tránh nhảy render
+      const slug = cleanKey(title) || `app-${index}`;
       items.push({
-        id: `app-csv-${index}-${Date.now()}`,
+        id: `sheet-${slug}`,
         title,
         description,
         url,
@@ -285,13 +307,18 @@ export const fetchAppsFromCsv = async (rawUrl: string): Promise<WebAppItem[]> =>
   }
 };
 
-// 2. FETCH NOTIFICATIONS (Triệt tiêu 100% rác function n(a))
+// 2. FETCH NOTIFICATIONS (Loại bỏ triệt để cache và mã JavaScript rác)
 export const fetchNotificationsFromCsv = async (rawUrl: string): Promise<NotificationItem[]> => {
-  const csvUrl = normalizeGoogleSheetUrl(rawUrl || DEFAULT_SHEET_CONFIG.notificationsCsvUrl);
-  if (!csvUrl) return DEFAULT_NOTIFICATIONS;
+  const targetUrl = getCacheBustedUrl(rawUrl || DEFAULT_SHEET_CONFIG.notificationsCsvUrl);
+  if (!targetUrl) return DEFAULT_NOTIFICATIONS;
 
   try {
-    const res = await fetch(csvUrl, { cache: 'no-cache' });
+    const res = await fetch(targetUrl, {
+      headers: {
+        'Cache-Control': 'no-cache, no-store, must-revalidate',
+        'Pragma': 'no-cache'
+      }
+    });
     if (!res.ok) throw new Error(`HTTP error ${res.status}`);
     const csvText = await res.text();
     validateCsvContent(csvText);
@@ -318,7 +345,6 @@ export const fetchNotificationsFromCsv = async (rawUrl: string): Promise<Notific
       };
 
       const title = findVal(['tieude', 'title', 'thongbao', 'name']);
-      // Chặn triệt để bất kỳ dòng code JavaScript rác nào
       if (!title || title.includes('function ') || title.includes('typeof ') || title.includes('Object.')) {
         return;
       }
@@ -330,10 +356,11 @@ export const fetchNotificationsFromCsv = async (rawUrl: string): Promise<Notific
 
       const validColors: NonNullable<NotificationItem['color']>[] = ['red', 'blue', 'purple', 'orange', 'green'];
       const color = (validColors.find((c) => colorRaw.includes(c)) ||
-        ['red', 'blue', 'purple', 'orange', 'green'][index % 5]) as NotificationItem['color'];
+        ['blue', 'red', 'purple', 'orange', 'green'][index % 5]) as NotificationItem['color'];
 
+      const slug = cleanKey(title) || `noti-${index}`;
       items.push({
-        id: `noti-csv-${index}-${Date.now()}`,
+        id: `noti-${slug}`,
         title,
         date,
         content,
@@ -357,13 +384,18 @@ export const fetchNotificationsFromCsv = async (rawUrl: string): Promise<Notific
   }
 };
 
-// 3. FETCH PERMISSIONS (Chỉ dùng tài khoản trong Sheet, loại bỏ tài khoản mặc định nếu có tài khoản riêng)
+// 3. FETCH PERMISSIONS (Chỉ dùng tài khoản trong Google Sheets, không dùng mật khẩu mặc định)
 export const fetchPermissionsFromCsv = async (rawUrl?: string): Promise<AdminAccount[]> => {
-  const csvUrl = normalizeGoogleSheetUrl(rawUrl || DEFAULT_SHEET_CONFIG.permissionsCsvUrl || '');
-  if (!csvUrl) return DEFAULT_ADMINS;
+  const targetUrl = getCacheBustedUrl(rawUrl || DEFAULT_SHEET_CONFIG.permissionsCsvUrl || '');
+  if (!targetUrl) return [];
 
   try {
-    const res = await fetch(csvUrl, { cache: 'no-cache' });
+    const res = await fetch(targetUrl, {
+      headers: {
+        'Cache-Control': 'no-cache, no-store, must-revalidate',
+        'Pragma': 'no-cache'
+      }
+    });
     if (!res.ok) throw new Error(`HTTP error ${res.status}`);
     const csvText = await res.text();
     validateCsvContent(csvText);
@@ -374,7 +406,7 @@ export const fetchPermissionsFromCsv = async (rawUrl?: string): Promise<AdminAcc
       transformHeader: (h) => h.trim()
     });
 
-    if (!parsed.data || parsed.data.length === 0) return DEFAULT_ADMINS;
+    if (!parsed.data || parsed.data.length === 0) return [];
 
     const accounts: AdminAccount[] = [];
     parsed.data.forEach((row) => {
@@ -415,14 +447,35 @@ export const fetchPermissionsFromCsv = async (rawUrl?: string): Promise<AdminAcc
       return accounts;
     }
 
-    return DEFAULT_ADMINS;
+    return [];
   } catch (error) {
     console.warn('Lỗi khi fetch PhanQuyen CSV:', error);
-    return DEFAULT_ADMINS;
+    // Trả về mảng rỗng để không cho phép đăng nhập nếu thông tin sai
+    return [];
   }
 };
 
-// 4. SUPPORT TICKETS MANAGEMENT (Lưu trữ và xem hòm thư yêu cầu hỗ trợ)
+// 4. GOOGLE APPS SCRIPT WEBHOOK (Ghi dữ liệu 2 chiều trực tiếp vào Google Sheets nếu có)
+export const pushToGasWebhook = async (
+  webhookUrl: string,
+  payload: { action: 'saveApp' | 'deleteApp'; app?: WebAppItem; appId?: string }
+): Promise<boolean> => {
+  if (!webhookUrl || !webhookUrl.trim()) return false;
+  try {
+    await fetch(webhookUrl.trim(), {
+      method: 'POST',
+      mode: 'no-cors',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+    return true;
+  } catch (err) {
+    console.warn('Lỗi gọi GAS webhook:', err);
+    return false;
+  }
+};
+
+// 5. SUPPORT TICKETS MANAGEMENT
 export const getStoredTickets = (): SupportTicket[] => {
   try {
     const raw = localStorage.getItem(STORAGE_KEYS.CACHED_TICKETS);
@@ -441,7 +494,6 @@ export const saveSupportTicket = async (ticket: SupportTicket): Promise<SupportT
   } catch {
     // ignore
   }
-  // Đồng bộ lên Cloud để Admin mở máy nào cũng xem được yêu cầu hỗ trợ
   saveCloudData({ tickets: updated });
   return updated;
 };

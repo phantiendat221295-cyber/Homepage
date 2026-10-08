@@ -1,19 +1,6 @@
 import { WebAppItem, NotificationItem, QuickToolItem, AdminAccount } from '../types';
 
-export const DEFAULT_ADMINS: AdminAccount[] = [
-  {
-    email: 'admin@fe.edu.vn',
-    passwordOrPin: 'admin123',
-    name: 'Quản trị viên FPT',
-    role: 'admin'
-  },
-  {
-    email: 'admin',
-    passwordOrPin: '123456',
-    name: 'Admin Đào Tạo',
-    role: 'admin'
-  }
-];
+export const DEFAULT_ADMINS: AdminAccount[] = [];
 
 export const DEFAULT_APPS: WebAppItem[] = [
   // Nhóm 1: Quản lý đào tạo

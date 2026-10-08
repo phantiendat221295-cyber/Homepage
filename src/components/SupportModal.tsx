@@ -6,9 +6,15 @@ interface SupportModalProps {
   isOpen: boolean;
   onClose: () => void;
   onSubmitTicket: (ticket: SupportTicket) => void;
+  adminContactEmail?: string;
 }
 
-export const SupportModal: React.FC<SupportModalProps> = ({ isOpen, onClose, onSubmitTicket }) => {
+export const SupportModal: React.FC<SupportModalProps> = ({
+  isOpen,
+  onClose,
+  onSubmitTicket,
+  adminContactEmail = 'Datpt60@fpt.edu.vn'
+}) => {
   const [submitted, setSubmitted] = useState(false);
   const [formData, setFormData] = useState({
     name: '',
@@ -45,7 +51,7 @@ export const SupportModal: React.FC<SupportModalProps> = ({ isOpen, onClose, onS
   };
 
   const mailtoLink = createdTicket
-    ? `mailto:Datpt70@fpt.edu.vn?subject=${encodeURIComponent(`[Yêu cầu hỗ trợ] ${createdTicket.category} - ${createdTicket.name}`)}&body=${encodeURIComponent(
+    ? `mailto:${adminContactEmail}?subject=${encodeURIComponent(`[Yêu cầu hỗ trợ] ${createdTicket.category} - ${createdTicket.name}`)}&body=${encodeURIComponent(
         `Kính gửi Ban Đào Tạo FPT Polyschool,\n\nTôi là: ${createdTicket.name} (${createdTicket.emailOrCode})\nVấn đề: ${createdTicket.category}\n\nNội dung chi tiết:\n${createdTicket.content}\n\nThời gian gửi: ${createdTicket.createdAt}`
       )}`
     : '';

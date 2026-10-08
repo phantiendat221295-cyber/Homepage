@@ -9,25 +9,16 @@ import {
   ExternalLink,
   Search,
   Lock,
-  Unlock,
-  Download,
-  RotateCcw,
-  Sparkles,
-  Link as LinkIcon,
-  Layers,
   LogOut,
   LogIn,
-  KeyRound,
   AlertCircle,
-  Copy,
-  Check,
-  HelpCircle,
   FileSpreadsheet,
   Mail,
   Inbox,
-  CheckCircle2,
+  Check,
   Clock,
-  ArrowRight
+  RefreshCw,
+  Sparkles
 } from 'lucide-react';
 import { DynamicIcon } from './DynamicIcon';
 
@@ -47,6 +38,8 @@ interface RoleManagementViewProps {
   onOpenSheetConfig: () => void;
   tickets: SupportTicket[];
   onUpdateTicketStatus: (ticketId: string, status: 'new' | 'resolved') => void;
+  onSyncNow?: () => Promise<void> | void;
+  isSyncing?: boolean;
 }
 
 export const RoleManagementView: React.FC<RoleManagementViewProps> = ({
@@ -64,7 +57,9 @@ export const RoleManagementView: React.FC<RoleManagementViewProps> = ({
   hasPermissionsSheet,
   onOpenSheetConfig,
   tickets,
-  onUpdateTicketStatus
+  onUpdateTicketStatus,
+  onSyncNow,
+  isSyncing = false
 }) => {
   // Login form state
   const [loginEmail, setLoginEmail] = useState('');
@@ -72,7 +67,7 @@ export const RoleManagementView: React.FC<RoleManagementViewProps> = ({
   const [loginError, setLoginError] = useState<string | null>(null);
   const [isLoggingIn, setIsLoggingIn] = useState(false);
   const [showGooglePrompt, setShowGooglePrompt] = useState(false);
-  const [customGoogleEmail, setCustomGoogleEmail] = useState('Datpt70@fpt.edu.vn');
+  const [googleEmailInput, setGoogleEmailInput] = useState('');
 
   // Admin view tab: 'apps' or 'tickets'
   const [adminTab, setAdminTab] = useState<'apps' | 'tickets'>('apps');
@@ -100,7 +95,7 @@ export const RoleManagementView: React.FC<RoleManagementViewProps> = ({
       const success = await onLoginAdmin(loginEmail.trim(), loginPass.trim());
       if (!success) {
         setLoginError(
-          'Email hoặc mật khẩu không chính xác! Hãy kiểm tra lại thông tin trong Tab PhanQuyen trên Google Sheets.'
+          'Email hoặc mật khẩu không chính xác! Hệ thống kiểm tra trực tiếp với dữ liệu trong tab PhanQuyen trên Google Sheets.'
         );
       } else {
         setLoginEmail('');
@@ -114,6 +109,10 @@ export const RoleManagementView: React.FC<RoleManagementViewProps> = ({
   };
 
   const handleGoogleLoginSubmit = async (email: string) => {
+    if (!email || !email.trim()) {
+      setLoginError('Vui lòng nhập địa chỉ Google / FPT Mail của bạn.');
+      return;
+    }
     setLoginError(null);
     setIsLoggingIn(true);
     try {
@@ -122,6 +121,7 @@ export const RoleManagementView: React.FC<RoleManagementViewProps> = ({
         setLoginError(`Tài khoản Google "${email}" chưa được cấp quyền Admin trong tab PhanQuyen trên Google Sheets!`);
       } else {
         setShowGooglePrompt(false);
+        setGoogleEmailInput('');
       }
     } catch (err: any) {
       setLoginError(err.message || 'Lỗi đăng nhập Google.');
@@ -130,37 +130,32 @@ export const RoleManagementView: React.FC<RoleManagementViewProps> = ({
     }
   };
 
-  const exportCsv = () => {
-    const csvContent =
-      "Tên,Mô tả,Link,Nhóm,Icon,Tag,Màu sắc\n" +
-      apps
-        .map(
-          (a) =>
-            `"${a.title.replace(/"/g, '""')}","${a.description.replace(/"/g, '""')}","${a.url}","${a.category}","${a.icon}","${a.tag || 'webapp'}","${a.colorTheme || 'blue'}"`
-        )
-        .join('\n');
-
-    const blob = new Blob(["\uFEFF" + csvContent], { type: 'text/csv;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `fpt_portal_apps_export_${new Date().toISOString().slice(0, 10)}.csv`;
-    a.click();
-    URL.revokeObjectURL(url);
-  };
-
   const newTicketsCount = tickets.filter((t) => t.status === 'new').length;
 
   return (
     <div className="space-y-8 animate-in fade-in duration-200">
       {/* HEADER SECTION */}
-      <div>
-        <h2 className="text-xl sm:text-2xl font-bold text-slate-800 tracking-tight">
-          Hệ Thống Phân Quyền & Quản Trị Hệ Thống
-        </h2>
-        <p className="text-xs sm:text-sm text-slate-500 mt-1">
-          Hệ thống bảo mật danh sách Quản trị viên qua <strong>Google Sheets</strong> và tự động đồng bộ trên đám mây.
-        </p>
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        <div>
+          <h2 className="text-xl sm:text-2xl font-bold text-slate-800 tracking-tight">
+            Hệ Thống Phân Quyền & Quản Trị Hệ Thống
+          </h2>
+          <p className="text-xs sm:text-sm text-slate-500 mt-1">
+            Dữ liệu đồng bộ trực tiếp thời gian thực từ <strong>Google Sheets</strong> và lưu trữ đám mây.
+          </p>
+        </div>
+
+        {onSyncNow && (
+          <button
+            type="button"
+            onClick={() => onSyncNow()}
+            disabled={isSyncing}
+            className="self-start sm:self-auto px-4 py-2 rounded-xl bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200 text-xs sm:text-sm font-semibold flex items-center gap-2 transition-all cursor-pointer shadow-2xs disabled:opacity-50"
+          >
+            <RefreshCw size={14} className={isSyncing ? 'animate-spin text-emerald-600' : 'text-emerald-600'} />
+            <span>{isSyncing ? 'Đang đồng bộ...' : 'Đồng bộ từ Google Sheets'}</span>
+          </button>
+        )}
       </div>
 
       {/* VIEW KHI ĐANG Ở QUYỀN ADMIN */}
@@ -182,7 +177,7 @@ export const RoleManagementView: React.FC<RoleManagementViewProps> = ({
                   </span>
                 </div>
                 <p className="text-xs text-emerald-100 mt-0.5">
-                  Tài khoản: {currentAdminUser?.email} • Mọi thay đổi bạn sửa tại đây hoặc trong Google Sheets sẽ <strong>tự động lưu vĩnh viễn</strong> cho tất cả máy tính!
+                  Tài khoản: {currentAdminUser?.email} • Mọi thao tác thêm/sửa/xóa tiện ích được tự động lưu vĩnh viễn và áp dụng ngay cho tất cả người dùng!
                 </p>
               </div>
             </div>
@@ -249,7 +244,7 @@ export const RoleManagementView: React.FC<RoleManagementViewProps> = ({
                     </h3>
                   </div>
                   <p className="text-xs text-slate-500 mt-0.5">
-                    Mọi chỉnh sửa tại đây đều tự động lưu lên Cloud Database, các máy khác vào web sẽ thấy ngay!
+                    Hệ thống tự động lưu trên đám mây và đồng bộ với Google Sheets. Không cần sao chép hay xuất file thủ công.
                   </p>
                 </div>
 
@@ -263,14 +258,17 @@ export const RoleManagementView: React.FC<RoleManagementViewProps> = ({
                     <span>+ Thêm tiện ích mới</span>
                   </button>
 
-                  <button
-                    type="button"
-                    onClick={exportCsv}
-                    className="px-3.5 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs sm:text-sm font-semibold flex items-center gap-1.5 transition-colors cursor-pointer"
-                  >
-                    <Download size={15} />
-                    <span>Xuất CSV</span>
-                  </button>
+                  {onSyncNow && (
+                    <button
+                      type="button"
+                      onClick={() => onSyncNow()}
+                      disabled={isSyncing}
+                      className="px-3.5 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs sm:text-sm font-semibold flex items-center gap-1.5 transition-colors cursor-pointer disabled:opacity-50"
+                    >
+                      <RefreshCw size={14} className={isSyncing ? 'animate-spin' : ''} />
+                      <span>Đồng bộ ngay</span>
+                    </button>
+                  )}
 
                   <button
                     type="button"
@@ -303,7 +301,9 @@ export const RoleManagementView: React.FC<RoleManagementViewProps> = ({
                 >
                   <option value="all">Tất cả nhóm danh mục</option>
                   {categories.map((c) => (
-                    <option key={c} value={c}>{c}</option>
+                    <option key={c} value={c}>
+                      {c}
+                    </option>
                   ))}
                 </select>
               </div>
@@ -358,7 +358,7 @@ export const RoleManagementView: React.FC<RoleManagementViewProps> = ({
                         </td>
 
                         <td className="py-3 px-4">
-                          <span className="text-[11px] uppercase font-bold text-slate-500">
+                          <span className="inline-block px-2 py-0.5 rounded text-[11px] font-mono uppercase bg-blue-50 text-blue-700">
                             {app.tag || 'webapp'}
                           </span>
                         </td>
@@ -368,21 +368,22 @@ export const RoleManagementView: React.FC<RoleManagementViewProps> = ({
                             <button
                               type="button"
                               onClick={() => onEditApp(app)}
-                              className="px-2.5 py-1.5 rounded-lg bg-blue-50 hover:bg-blue-600 text-blue-600 hover:text-white font-semibold text-xs flex items-center gap-1 transition-all cursor-pointer"
+                              className="p-1.5 rounded-lg bg-slate-100 hover:bg-blue-50 text-slate-600 hover:text-blue-600 transition-colors cursor-pointer"
+                              title="Chỉnh sửa tên và link"
                             >
-                              <Edit3 size={13} />
-                              <span>Sửa</span>
+                              <Edit3 size={15} />
                             </button>
                             <button
                               type="button"
                               onClick={() => {
-                                if (confirm(`Bạn có chắc muốn xóa "${app.title}"?`)) {
+                                if (window.confirm(`Bạn có chắc muốn xóa tiện ích "${app.title}" không?`)) {
                                   onDeleteApp(app.id);
                                 }
                               }}
-                              className="p-1.5 rounded-lg hover:bg-rose-50 text-slate-400 hover:text-rose-600 transition-colors cursor-pointer"
+                              className="p-1.5 rounded-lg bg-slate-100 hover:bg-rose-50 text-slate-600 hover:text-rose-600 transition-colors cursor-pointer"
+                              title="Xóa tiện ích"
                             >
-                              <Trash2 size={14} />
+                              <Trash2 size={15} />
                             </button>
                           </div>
                         </td>
@@ -394,9 +395,9 @@ export const RoleManagementView: React.FC<RoleManagementViewProps> = ({
             </div>
           )}
 
-          {/* TAB 2: HỘP THƯ YÊU CẦU HỖ TRỢ (TICKETS INBOX) */}
+          {/* TAB 2: HỘP THƯ YÊU CẦU HỖ TRỢ */}
           {adminTab === 'tickets' && (
-            <div className="bg-white rounded-3xl p-6 border border-slate-200 shadow-xs space-y-5">
+            <div className="bg-white rounded-3xl p-6 border border-slate-200 shadow-xs space-y-4">
               <div className="flex items-center justify-between pb-3 border-b border-slate-100">
                 <div className="flex items-center gap-3">
                   <div className="w-10 h-10 rounded-2xl bg-blue-50 text-blue-600 flex items-center justify-center">
@@ -506,13 +507,13 @@ export const RoleManagementView: React.FC<RoleManagementViewProps> = ({
             </div>
 
             <p className="text-xs sm:text-sm text-slate-600 leading-relaxed">
-              Mọi người dùng khi vào trang web đều ở quyền này để đảm bảo an toàn tuyệt đối, không ai có thể sửa đổi hay xóa nhầm dữ liệu của trường:
+              Mọi người dùng khi vào trang web đều ở quyền này để đảm bảo an toàn tuyệt đối, không ai có thể can thiệp hay sửa nhầm dữ liệu của nhà trường:
             </p>
 
             <ul className="text-xs sm:text-[13px] text-slate-600 space-y-2 list-disc pl-5">
-              <li>Tra cứu webapp và tin tức đào tạo tức thì</li>
-              <li>Bấm nút truy cập trực tiếp đến các hệ thống con</li>
-              <li>Tự động nhận bản cập nhật mới nhất từ Google Sheets</li>
+              <li>Tra cứu webapp và tin tức đào tạo tức thì.</li>
+              <li>Bấm nút mũi tên để truy cập trực tiếp đến các hệ thống con.</li>
+              <li>Luôn tự động nhận bản cập nhật mới nhất từ Google Sheets mỗi khi tải trang.</li>
             </ul>
 
             <div className="pt-2">
@@ -535,7 +536,7 @@ export const RoleManagementView: React.FC<RoleManagementViewProps> = ({
                 </div>
                 <div>
                   <h3 className="font-bold text-slate-800 text-lg">Đăng Nhập Quản Trị Viên (Admin)</h3>
-                  <p className="text-xs text-slate-500">Xác thực tài khoản đã phân quyền trong Google Sheets</p>
+                  <p className="text-xs text-slate-500">Xác thực danh sách tài khoản trong Google Sheets</p>
                 </div>
               </div>
             </div>
@@ -547,7 +548,7 @@ export const RoleManagementView: React.FC<RoleManagementViewProps> = ({
               </div>
             )}
 
-            {/* CHỨC NĂNG 5: ĐĂNG NHẬP BẰNG TÀI KHOẢN GOOGLE */}
+            {/* CHỨC NĂNG 1: ĐĂNG NHẬP BẰNG TÀI KHOẢN GOOGLE */}
             <div>
               <button
                 type="button"
@@ -572,32 +573,33 @@ export const RoleManagementView: React.FC<RoleManagementViewProps> = ({
                     d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z"
                   />
                 </svg>
-                <span>Đăng nhập nhanh bằng tài khoản Google</span>
+                <span>Đăng nhập với tài khoản Google</span>
               </button>
 
               {showGooglePrompt && (
                 <div className="mt-3 p-3.5 bg-blue-50/70 border border-blue-200 rounded-2xl space-y-2 animate-in fade-in">
                   <p className="text-xs text-blue-900 font-semibold">
-                    Xác nhận địa chỉ Google / FPT Mail của bạn:
+                    Nhập địa chỉ Google / FPT Mail của quản trị viên:
                   </p>
                   <div className="flex gap-2">
                     <input
                       type="email"
-                      value={customGoogleEmail}
-                      onChange={(e) => setCustomGoogleEmail(e.target.value)}
-                      placeholder="Datpt70@fpt.edu.vn"
+                      value={googleEmailInput}
+                      onChange={(e) => setGoogleEmailInput(e.target.value)}
+                      placeholder="email@fpt.edu.vn hoặc gmail..."
                       className="flex-1 bg-white border border-blue-300 rounded-xl px-3 py-1.5 text-xs text-slate-800 focus:outline-none"
                     />
                     <button
                       type="button"
-                      onClick={() => handleGoogleLoginSubmit(customGoogleEmail)}
-                      className="px-3.5 py-1.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs cursor-pointer"
+                      disabled={isLoggingIn}
+                      onClick={() => handleGoogleLoginSubmit(googleEmailInput)}
+                      className="px-3.5 py-1.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs cursor-pointer disabled:opacity-50"
                     >
                       Xác nhận
                     </button>
                   </div>
                   <p className="text-[11px] text-blue-700">
-                    Hệ thống sẽ kiểm tra xem email Google này có trong danh sách phân quyền Admin của trường hay không.
+                    Hệ thống kiểm tra trực tiếp danh sách phân quyền Admin từ Google Sheets để cấp quyền tức thì.
                   </p>
                 </div>
               )}
@@ -620,7 +622,7 @@ export const RoleManagementView: React.FC<RoleManagementViewProps> = ({
                   required
                   value={loginEmail}
                   onChange={(e) => setLoginEmail(e.target.value)}
-                  placeholder="Datpt70@fpt.edu.vn"
+                  placeholder="Nhập email quản trị viên..."
                   className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5 text-xs sm:text-sm text-slate-800 focus:bg-white focus:border-emerald-500 focus:outline-none"
                 />
               </div>
@@ -648,15 +650,6 @@ export const RoleManagementView: React.FC<RoleManagementViewProps> = ({
                 <span>{isLoggingIn ? 'Đang xác thực...' : 'Đăng nhập quyền Admin'}</span>
               </button>
             </form>
-
-            <div className="pt-2 border-t border-slate-100 text-[11px] text-slate-500 space-y-1">
-              <p>
-                <strong>Tài khoản Quản trị viên trong Google Sheets:</strong> <code>Datpt70@fpt.edu.vn</code> (Mật khẩu: <code>123</code>).
-              </p>
-              <p>
-                Tài khoản mặc định cũ đã bị vô hiệu hóa vì hệ thống đã chuyển sang dùng danh sách bảo mật của bạn.
-              </p>
-            </div>
           </div>
         </div>
       )}
