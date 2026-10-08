@@ -36,6 +36,16 @@ export interface AdminAccount {
   role: 'admin' | 'user';
 }
 
+export interface SupportTicket {
+  id: string;
+  name: string;
+  emailOrCode: string;
+  category: string;
+  content: string;
+  createdAt: string;
+  status: 'new' | 'resolved';
+}
+
 export interface GoogleSheetsConfig {
   appsCsvUrl: string;
   notificationsCsvUrl: string;

@@ -1,5 +1,5 @@
 import Papa from 'papaparse';
-import { WebAppItem, NotificationItem, GoogleSheetsConfig, AdminAccount } from '../types';
+import { WebAppItem, NotificationItem, GoogleSheetsConfig, AdminAccount, SupportTicket } from '../types';
 import { DEFAULT_APPS, DEFAULT_NOTIFICATIONS, DEFAULT_ADMINS } from '../data/defaultData';
 
 const STORAGE_KEYS = {
@@ -7,17 +7,21 @@ const STORAGE_KEYS = {
   CACHED_APPS: 'fpt_portal_cached_apps',
   CACHED_NOTIS: 'fpt_portal_cached_notis',
   CACHED_ADMINS: 'fpt_portal_cached_admins',
+  CACHED_TICKETS: 'fpt_portal_cached_tickets',
   LAST_SYNC: 'fpt_portal_last_sync'
 };
 
-// Cloud Shared Config API: giúp mọi máy tính & điện thoại truy cập web trên Vercel đều tự động nhận link Google Sheets chung
+// Cloud Shared API endpoint (đảm bảo mọi máy tính truy cập Vercel đều dùng chung cơ sở dữ liệu)
 const CLOUD_CONFIG_URL = 'https://api.restful-api.dev/objects/ff808181a09d98f701a11a16e7991d14';
 
-// Cấu hình Google Sheets mặc định của dự án (sử dụng link thực tế từ tài khoản người dùng)
+// 3 đường link Google Sheets chính thức đã xác thực của người dùng
 export const DEFAULT_SHEET_CONFIG: GoogleSheetsConfig = {
-  appsCsvUrl: 'https://docs.google.com/spreadsheets/d/1tp6j56rxBAQVmOeARMa7tat2Cq9m4ga0yuY-w4946iM/export?format=csv&gid=0',
-  notificationsCsvUrl: '',
-  permissionsCsvUrl: '',
+  appsCsvUrl:
+    'https://docs.google.com/spreadsheets/d/e/2PACX-1vS9wRadk5MTgUYCiN2NhZbaJiE7U_b8H07p8_8ZVBaBdbuha0QyLXaQ590-dQedY_yEBfolHA2IxW4g/pub?gid=0&single=true&output=csv',
+  notificationsCsvUrl:
+    'https://docs.google.com/spreadsheets/d/e/2PACX-1vRBqtfVE6cJfGPnvdIK-cDjQ94h_EHCaCOQfeI0TmIGI0NZ-lviOC6Do27GuZskKEbtVKtWDnqqWKNa/pub?gid=0&single=true&output=csv',
+  permissionsCsvUrl:
+    'https://docs.google.com/spreadsheets/d/e/2PACX-1vRSCveJeiShAO-1DAeOusENgYe_8dAqx0P6yZvzZZoOX5ZmoSpGaLah-Y_ldUa-_jNMksVh-ig7Vyxe/pub?gid=0&single=true&output=csv',
   lastSynced: undefined,
   autoSync: true
 };
@@ -26,7 +30,7 @@ export const normalizeGoogleSheetUrl = (rawUrl: string): string => {
   if (!rawUrl || !rawUrl.trim()) return '';
   let url = rawUrl.trim();
 
-  // If user pasted normal edit URL: https://docs.google.com/spreadsheets/d/{ID}/edit?gid={GID}#gid={GID}
+  // Handle normal edit link: /edit?gid=...
   const editMatch = url.match(/\/spreadsheets\/d\/([a-zA-Z0-9-_]+)\/edit(?:.*[?&]gid=([0-9]+))?/);
   if (editMatch) {
     const sheetId = editMatch[1];
@@ -34,12 +38,12 @@ export const normalizeGoogleSheetUrl = (rawUrl: string): string => {
     return `https://docs.google.com/spreadsheets/d/${sheetId}/export?format=csv&gid=${gid}`;
   }
 
-  // If user pasted /pubhtml -> change to /pub?output=csv
+  // Handle /pubhtml -> /pub?output=csv
   if (url.includes('/pubhtml')) {
     url = url.replace('/pubhtml', '/pub');
   }
 
-  // If it's a /pub link, ensure it has output=csv
+  // Ensure output=csv
   if (url.includes('/pub') && !url.includes('output=csv')) {
     const separator = url.includes('?') ? '&' : '?';
     url = `${url}${separator}output=csv`;
@@ -54,7 +58,6 @@ export const getStoredConfig = (): GoogleSheetsConfig => {
     const raw = localStorage.getItem(STORAGE_KEYS.CONFIG);
     if (raw) {
       const parsed = JSON.parse(raw);
-      // Nếu đã có cấu hình hợp lệ trong localStorage
       if (parsed && (parsed.appsCsvUrl || parsed.notificationsCsvUrl)) {
         return parsed;
       }
@@ -62,49 +65,84 @@ export const getStoredConfig = (): GoogleSheetsConfig => {
   } catch {
     // ignore
   }
-  // Mặc định trả về link Google Sheets của người dùng
   return DEFAULT_SHEET_CONFIG;
 };
 
-// Đồng bộ cấu hình lên Cloud để bất kỳ máy nào truy cập đều lấy được
-export const saveCloudConfig = async (config: GoogleSheetsConfig): Promise<void> => {
+// Đồng bộ Cloud Config và danh sách Apps sửa trên Web
+export const saveCloudData = async (data: {
+  config?: GoogleSheetsConfig;
+  customApps?: WebAppItem[];
+  tickets?: SupportTicket[];
+}): Promise<void> => {
   try {
+    // Đọc cloud data hiện tại trước để merge
+    let currentData: any = {};
+    try {
+      const r = await fetch(CLOUD_CONFIG_URL);
+      if (r.ok) {
+        const j = await r.json();
+        currentData = j.data || {};
+      }
+    } catch {
+      // ignore
+    }
+
+    const mergedData = {
+      ...currentData,
+      ...(data.config
+        ? {
+            appsCsvUrl: data.config.appsCsvUrl,
+            notificationsCsvUrl: data.config.notificationsCsvUrl,
+            permissionsCsvUrl: data.config.permissionsCsvUrl
+          }
+        : {}),
+      ...(data.customApps ? { customApps: data.customApps } : {}),
+      ...(data.tickets ? { tickets: data.tickets } : {}),
+      updatedAt: new Date().toISOString()
+    };
+
     await fetch(CLOUD_CONFIG_URL, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         name: 'fpt_portal_sheet_config',
-        data: {
-          appsCsvUrl: config.appsCsvUrl,
-          notificationsCsvUrl: config.notificationsCsvUrl,
-          permissionsCsvUrl: config.permissionsCsvUrl,
-          updatedAt: new Date().toISOString()
-        }
+        data: mergedData
       })
     });
   } catch (err) {
-    console.warn('Không thể lưu lên Cloud Config API:', err);
+    console.warn('Lỗi khi lưu Cloud Data:', err);
   }
 };
 
-// Lấy cấu hình mới nhất từ Cloud (để máy khác cũng tự động cập nhật)
-export const fetchCloudConfig = async (): Promise<GoogleSheetsConfig | null> => {
+// Tải toàn bộ Cloud Data (config + customApps + tickets)
+export const fetchCloudData = async (): Promise<{
+  config?: GoogleSheetsConfig;
+  customApps?: WebAppItem[];
+  tickets?: SupportTicket[];
+} | null> => {
   try {
     const res = await fetch(CLOUD_CONFIG_URL, { cache: 'no-cache' });
     if (!res.ok) return null;
     const json = await res.json();
-    if (json && json.data && (json.data.appsCsvUrl || json.data.notificationsCsvUrl)) {
-      return {
-        appsCsvUrl: json.data.appsCsvUrl || DEFAULT_SHEET_CONFIG.appsCsvUrl,
-        notificationsCsvUrl: json.data.notificationsCsvUrl || '',
-        permissionsCsvUrl: json.data.permissionsCsvUrl || '',
-        autoSync: true
-      };
-    }
+    if (!json || !json.data) return null;
+
+    const d = json.data;
+    const config: GoogleSheetsConfig = {
+      appsCsvUrl: d.appsCsvUrl || DEFAULT_SHEET_CONFIG.appsCsvUrl,
+      notificationsCsvUrl: d.notificationsCsvUrl || DEFAULT_SHEET_CONFIG.notificationsCsvUrl,
+      permissionsCsvUrl: d.permissionsCsvUrl || DEFAULT_SHEET_CONFIG.permissionsCsvUrl,
+      autoSync: true
+    };
+
+    return {
+      config,
+      customApps: Array.isArray(d.customApps) ? d.customApps : undefined,
+      tickets: Array.isArray(d.tickets) ? d.tickets : undefined
+    };
   } catch (err) {
-    console.warn('Lỗi fetch Cloud Config:', err);
+    console.warn('Lỗi fetch Cloud Data:', err);
+    return null;
   }
-  return null;
 };
 
 export const saveStoredConfig = (config: GoogleSheetsConfig) => {
@@ -113,11 +151,10 @@ export const saveStoredConfig = (config: GoogleSheetsConfig) => {
   } catch (err) {
     console.error('Failed to save sheet config', err);
   }
-  // Lưu đồng thời lên Cloud
-  saveCloudConfig(config);
+  saveCloudData({ config });
 };
 
-// Helper to sanitize & normalize keys
+// Helper normalize key
 const cleanKey = (key: string) => {
   return key
     .toLowerCase()
@@ -132,7 +169,6 @@ const cleanKey = (key: string) => {
     .replace(/[^a-z0-9]/g, '');
 };
 
-// Validate that text is actual CSV and not HTML / JavaScript / Google Login
 const validateCsvContent = (text: string) => {
   if (!text || text.trim().length === 0) {
     throw new Error('Dữ liệu trả về trống.');
@@ -153,20 +189,19 @@ const validateCsvContent = (text: string) => {
 
   if (isHtml) {
     throw new Error(
-      'LINK_REQUIRES_LOGIN: Google Sheets đang yêu cầu đăng nhập hoặc chưa mở quyền công khai ("Bất kỳ ai có liên kết"). Vui lòng kiểm tra quyền chia sẻ!'
+      'LINK_REQUIRES_LOGIN: Google Sheets đang yêu cầu đăng nhập. Vui lòng kiểm tra quyền chia sẻ công khai và chọn định dạng CSV!'
     );
   }
 };
 
+// 1. FETCH APPS
 export const fetchAppsFromCsv = async (rawUrl: string): Promise<WebAppItem[]> => {
-  const csvUrl = normalizeGoogleSheetUrl(rawUrl);
+  const csvUrl = normalizeGoogleSheetUrl(rawUrl || DEFAULT_SHEET_CONFIG.appsCsvUrl);
   if (!csvUrl) return DEFAULT_APPS;
 
   try {
     const res = await fetch(csvUrl, { cache: 'no-cache' });
-    if (!res.ok) {
-      throw new Error(`HTTP error ${res.status}`);
-    }
+    if (!res.ok) throw new Error(`HTTP error ${res.status}`);
     const csvText = await res.text();
     validateCsvContent(csvText);
 
@@ -176,11 +211,8 @@ export const fetchAppsFromCsv = async (rawUrl: string): Promise<WebAppItem[]> =>
       transformHeader: (h) => h.trim()
     });
 
-    if (!parsed.data || parsed.data.length === 0) {
-      return DEFAULT_APPS;
-    }
+    if (!parsed.data || parsed.data.length === 0) return DEFAULT_APPS;
 
-    // Verify header sanity
     const sampleRow = parsed.data[0] || {};
     const headers = Object.keys(sampleRow).map(cleanKey);
     const hasValidCol = headers.some(
@@ -195,7 +227,7 @@ export const fetchAppsFromCsv = async (rawUrl: string): Promise<WebAppItem[]> =>
     );
 
     if (!hasValidCol) {
-      throw new Error('Cột tiêu đề trong Google Sheets không hợp lệ (cần có cột Tên, Link, Nhóm).');
+      throw new Error('Cột tiêu đề không hợp lệ.');
     }
 
     const items: WebAppItem[] = [];
@@ -212,7 +244,7 @@ export const fetchAppsFromCsv = async (rawUrl: string): Promise<WebAppItem[]> =>
       };
 
       const title = findVal(['ten', 'title', 'name', 'tieude']);
-      if (!title) return; // skip empty rows
+      if (!title || title.includes('function ') || title.includes('typeof ')) return;
 
       const description = findVal(['mota', 'description', 'desc', 'noidung']) || 'Không có mô tả';
       const url = findVal(['link', 'url', 'duongdan', 'href']) || '#';
@@ -238,11 +270,8 @@ export const fetchAppsFromCsv = async (rawUrl: string): Promise<WebAppItem[]> =>
       });
     });
 
-    if (items.length === 0) {
-      return DEFAULT_APPS;
-    }
+    if (items.length === 0) return DEFAULT_APPS;
 
-    // Cache valid items
     try {
       localStorage.setItem(STORAGE_KEYS.CACHED_APPS, JSON.stringify(items));
     } catch {
@@ -256,15 +285,14 @@ export const fetchAppsFromCsv = async (rawUrl: string): Promise<WebAppItem[]> =>
   }
 };
 
+// 2. FETCH NOTIFICATIONS (Triệt tiêu 100% rác function n(a))
 export const fetchNotificationsFromCsv = async (rawUrl: string): Promise<NotificationItem[]> => {
-  const csvUrl = normalizeGoogleSheetUrl(rawUrl);
+  const csvUrl = normalizeGoogleSheetUrl(rawUrl || DEFAULT_SHEET_CONFIG.notificationsCsvUrl);
   if (!csvUrl) return DEFAULT_NOTIFICATIONS;
 
   try {
     const res = await fetch(csvUrl, { cache: 'no-cache' });
-    if (!res.ok) {
-      throw new Error(`HTTP error ${res.status}`);
-    }
+    if (!res.ok) throw new Error(`HTTP error ${res.status}`);
     const csvText = await res.text();
     validateCsvContent(csvText);
 
@@ -274,9 +302,7 @@ export const fetchNotificationsFromCsv = async (rawUrl: string): Promise<Notific
       transformHeader: (h) => h.trim()
     });
 
-    if (!parsed.data || parsed.data.length === 0) {
-      return DEFAULT_NOTIFICATIONS;
-    }
+    if (!parsed.data || parsed.data.length === 0) return DEFAULT_NOTIFICATIONS;
 
     const items: NotificationItem[] = [];
     parsed.data.forEach((row, index) => {
@@ -292,7 +318,10 @@ export const fetchNotificationsFromCsv = async (rawUrl: string): Promise<Notific
       };
 
       const title = findVal(['tieude', 'title', 'thongbao', 'name']);
-      if (!title) return;
+      // Chặn triệt để bất kỳ dòng code JavaScript rác nào
+      if (!title || title.includes('function ') || title.includes('typeof ') || title.includes('Object.')) {
+        return;
+      }
 
       const date = findVal(['ngay', 'date', 'thoigian', 'time']) || new Date().toLocaleDateString('vi-VN');
       const content = findVal(['noidung', 'content', 'mota', 'chitiet']) || title;
@@ -328,9 +357,9 @@ export const fetchNotificationsFromCsv = async (rawUrl: string): Promise<Notific
   }
 };
 
-// Fetch tab 'PhanQuyen' from Google Sheets
-export const fetchPermissionsFromCsv = async (rawUrl: string): Promise<AdminAccount[]> => {
-  const csvUrl = normalizeGoogleSheetUrl(rawUrl);
+// 3. FETCH PERMISSIONS (Chỉ dùng tài khoản trong Sheet, loại bỏ tài khoản mặc định nếu có tài khoản riêng)
+export const fetchPermissionsFromCsv = async (rawUrl?: string): Promise<AdminAccount[]> => {
+  const csvUrl = normalizeGoogleSheetUrl(rawUrl || DEFAULT_SHEET_CONFIG.permissionsCsvUrl || '');
   if (!csvUrl) return DEFAULT_ADMINS;
 
   try {
@@ -364,7 +393,8 @@ export const fetchPermissionsFromCsv = async (rawUrl: string): Promise<AdminAcco
       const passwordOrPin = findVal(['matkhau', 'password', 'pass', 'pin', 'mapin']);
       const name = findVal(['ten', 'hoten', 'name']) || email;
       const roleRaw = findVal(['quyen', 'role', 'vaitro']).toLowerCase();
-      const role: 'admin' | 'user' = roleRaw.includes('admin') || roleRaw.includes('quantri') ? 'admin' : 'user';
+      const role: 'admin' | 'user' =
+        roleRaw.includes('admin') || roleRaw.includes('quantri') || roleRaw === '' ? 'admin' : 'user';
 
       if (!email || !passwordOrPin) return;
 
@@ -376,17 +406,54 @@ export const fetchPermissionsFromCsv = async (rawUrl: string): Promise<AdminAcco
       });
     });
 
-    if (accounts.length === 0) return DEFAULT_ADMINS;
-
-    try {
-      localStorage.setItem(STORAGE_KEYS.CACHED_ADMINS, JSON.stringify(accounts));
-    } catch {
-      // ignore
+    if (accounts.length > 0) {
+      try {
+        localStorage.setItem(STORAGE_KEYS.CACHED_ADMINS, JSON.stringify(accounts));
+      } catch {
+        // ignore
+      }
+      return accounts;
     }
 
-    return accounts;
+    return DEFAULT_ADMINS;
   } catch (error) {
     console.warn('Lỗi khi fetch PhanQuyen CSV:', error);
     return DEFAULT_ADMINS;
   }
+};
+
+// 4. SUPPORT TICKETS MANAGEMENT (Lưu trữ và xem hòm thư yêu cầu hỗ trợ)
+export const getStoredTickets = (): SupportTicket[] => {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEYS.CACHED_TICKETS);
+    if (raw) return JSON.parse(raw);
+  } catch {
+    // ignore
+  }
+  return [];
+};
+
+export const saveSupportTicket = async (ticket: SupportTicket): Promise<SupportTicket[]> => {
+  const current = getStoredTickets();
+  const updated = [ticket, ...current];
+  try {
+    localStorage.setItem(STORAGE_KEYS.CACHED_TICKETS, JSON.stringify(updated));
+  } catch {
+    // ignore
+  }
+  // Đồng bộ lên Cloud để Admin mở máy nào cũng xem được yêu cầu hỗ trợ
+  saveCloudData({ tickets: updated });
+  return updated;
+};
+
+export const updateTicketStatus = async (ticketId: string, status: 'new' | 'resolved'): Promise<SupportTicket[]> => {
+  const current = getStoredTickets();
+  const updated = current.map((t) => (t.id === ticketId ? { ...t, status } : t));
+  try {
+    localStorage.setItem(STORAGE_KEYS.CACHED_TICKETS, JSON.stringify(updated));
+  } catch {
+    // ignore
+  }
+  saveCloudData({ tickets: updated });
+  return updated;
 };
