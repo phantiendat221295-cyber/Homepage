@@ -18,7 +18,9 @@ import {
   saveStoredConfig,
   fetchAppsFromCsv,
   fetchNotificationsFromCsv,
-  fetchPermissionsFromCsv
+  fetchPermissionsFromCsv,
+  fetchCloudConfig,
+  DEFAULT_SHEET_CONFIG
 } from './services/sheetsService';
 import { SearchX, Filter, Plus, ShieldCheck, X, Check, Edit3, ShieldAlert, LogOut, FileSpreadsheet } from 'lucide-react';
 
@@ -147,11 +149,27 @@ export default function App() {
     }
   };
 
-  // Sync on initial mount if URL exists
+  // Sync on initial mount: Tự động kiểm tra Cloud Config để bất kỳ máy nào mở web cũng lấy đúng link Google Sheets
   useEffect(() => {
-    if (sheetConfig.appsCsvUrl || sheetConfig.notificationsCsvUrl) {
-      syncDataFromSheets(sheetConfig);
-    }
+    const initSync = async () => {
+      try {
+        const cloudConfig = await fetchCloudConfig();
+        if (cloudConfig && (cloudConfig.appsCsvUrl || cloudConfig.notificationsCsvUrl)) {
+          setSheetConfig(cloudConfig);
+          await syncDataFromSheets(cloudConfig);
+          return;
+        }
+      } catch {
+        // ignore
+      }
+
+      // Nếu không có cloud config hoặc offline, dùng config hiện tại (hoặc DEFAULT_SHEET_CONFIG)
+      const effectiveConfig = sheetConfig.appsCsvUrl ? sheetConfig : DEFAULT_SHEET_CONFIG;
+      setSheetConfig(effectiveConfig);
+      await syncDataFromSheets(effectiveConfig);
+    };
+
+    initSync();
   }, []);
 
   const handleSaveSheetConfig = async (newConfig: GoogleSheetsConfig) => {

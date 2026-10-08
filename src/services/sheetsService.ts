@@ -10,6 +10,18 @@ const STORAGE_KEYS = {
   LAST_SYNC: 'fpt_portal_last_sync'
 };
 
+// Cloud Shared Config API: giúp mọi máy tính & điện thoại truy cập web trên Vercel đều tự động nhận link Google Sheets chung
+const CLOUD_CONFIG_URL = 'https://api.restful-api.dev/objects/ff808181a09d98f701a11a16e7991d14';
+
+// Cấu hình Google Sheets mặc định của dự án (sử dụng link thực tế từ tài khoản người dùng)
+export const DEFAULT_SHEET_CONFIG: GoogleSheetsConfig = {
+  appsCsvUrl: 'https://docs.google.com/spreadsheets/d/1tp6j56rxBAQVmOeARMa7tat2Cq9m4ga0yuY-w4946iM/export?format=csv&gid=0',
+  notificationsCsvUrl: '',
+  permissionsCsvUrl: '',
+  lastSynced: undefined,
+  autoSync: true
+};
+
 export const normalizeGoogleSheetUrl = (rawUrl: string): string => {
   if (!rawUrl || !rawUrl.trim()) return '';
   let url = rawUrl.trim();
@@ -36,22 +48,63 @@ export const normalizeGoogleSheetUrl = (rawUrl: string): string => {
   return url;
 };
 
+// Lấy cấu hình từ LocalStorage hoặc Default
 export const getStoredConfig = (): GoogleSheetsConfig => {
   try {
     const raw = localStorage.getItem(STORAGE_KEYS.CONFIG);
     if (raw) {
-      return JSON.parse(raw);
+      const parsed = JSON.parse(raw);
+      // Nếu đã có cấu hình hợp lệ trong localStorage
+      if (parsed && (parsed.appsCsvUrl || parsed.notificationsCsvUrl)) {
+        return parsed;
+      }
     }
   } catch {
     // ignore
   }
-  return {
-    appsCsvUrl: '',
-    notificationsCsvUrl: '',
-    permissionsCsvUrl: '',
-    lastSynced: undefined,
-    autoSync: true
-  };
+  // Mặc định trả về link Google Sheets của người dùng
+  return DEFAULT_SHEET_CONFIG;
+};
+
+// Đồng bộ cấu hình lên Cloud để bất kỳ máy nào truy cập đều lấy được
+export const saveCloudConfig = async (config: GoogleSheetsConfig): Promise<void> => {
+  try {
+    await fetch(CLOUD_CONFIG_URL, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        name: 'fpt_portal_sheet_config',
+        data: {
+          appsCsvUrl: config.appsCsvUrl,
+          notificationsCsvUrl: config.notificationsCsvUrl,
+          permissionsCsvUrl: config.permissionsCsvUrl,
+          updatedAt: new Date().toISOString()
+        }
+      })
+    });
+  } catch (err) {
+    console.warn('Không thể lưu lên Cloud Config API:', err);
+  }
+};
+
+// Lấy cấu hình mới nhất từ Cloud (để máy khác cũng tự động cập nhật)
+export const fetchCloudConfig = async (): Promise<GoogleSheetsConfig | null> => {
+  try {
+    const res = await fetch(CLOUD_CONFIG_URL, { cache: 'no-cache' });
+    if (!res.ok) return null;
+    const json = await res.json();
+    if (json && json.data && (json.data.appsCsvUrl || json.data.notificationsCsvUrl)) {
+      return {
+        appsCsvUrl: json.data.appsCsvUrl || DEFAULT_SHEET_CONFIG.appsCsvUrl,
+        notificationsCsvUrl: json.data.notificationsCsvUrl || '',
+        permissionsCsvUrl: json.data.permissionsCsvUrl || '',
+        autoSync: true
+      };
+    }
+  } catch (err) {
+    console.warn('Lỗi fetch Cloud Config:', err);
+  }
+  return null;
 };
 
 export const saveStoredConfig = (config: GoogleSheetsConfig) => {
@@ -60,6 +113,8 @@ export const saveStoredConfig = (config: GoogleSheetsConfig) => {
   } catch (err) {
     console.error('Failed to save sheet config', err);
   }
+  // Lưu đồng thời lên Cloud
+  saveCloudConfig(config);
 };
 
 // Helper to sanitize & normalize keys
@@ -125,7 +180,7 @@ export const fetchAppsFromCsv = async (rawUrl: string): Promise<WebAppItem[]> =>
       return DEFAULT_APPS;
     }
 
-    // Verify header sanity: at least one recognized column
+    // Verify header sanity
     const sampleRow = parsed.data[0] || {};
     const headers = Object.keys(sampleRow).map(cleanKey);
     const hasValidCol = headers.some(
@@ -292,35 +347,34 @@ export const fetchPermissionsFromCsv = async (rawUrl: string): Promise<AdminAcco
 
     if (!parsed.data || parsed.data.length === 0) return DEFAULT_ADMINS;
 
-    const accounts: AdminAccount[] = parsed.data
-      .map((row) => {
-        const keys = Object.keys(row);
-        const findVal = (expectedKeys: string[]): string => {
-          for (const k of keys) {
-            const norm = cleanKey(k);
-            if (expectedKeys.some((ek) => norm.includes(ek))) {
-              return (row[k] || '').trim();
-            }
+    const accounts: AdminAccount[] = [];
+    parsed.data.forEach((row) => {
+      const keys = Object.keys(row);
+      const findVal = (expectedKeys: string[]): string => {
+        for (const k of keys) {
+          const norm = cleanKey(k);
+          if (expectedKeys.some((ek) => norm.includes(ek))) {
+            return (row[k] || '').trim();
           }
-          return '';
-        };
+        }
+        return '';
+      };
 
-        const email = findVal(['email', 'taikhoan', 'username', 'user', 'ma']);
-        const passwordOrPin = findVal(['matkhau', 'password', 'pass', 'pin', 'mapin']);
-        const name = findVal(['ten', 'hoten', 'name']) || email;
-        const roleRaw = findVal(['quyen', 'role', 'vaitro']).toLowerCase();
-        const role: 'admin' | 'user' = roleRaw.includes('admin') || roleRaw.includes('quantri') ? 'admin' : 'user';
+      const email = findVal(['email', 'taikhoan', 'username', 'user', 'ma']);
+      const passwordOrPin = findVal(['matkhau', 'password', 'pass', 'pin', 'mapin']);
+      const name = findVal(['ten', 'hoten', 'name']) || email;
+      const roleRaw = findVal(['quyen', 'role', 'vaitro']).toLowerCase();
+      const role: 'admin' | 'user' = roleRaw.includes('admin') || roleRaw.includes('quantri') ? 'admin' : 'user';
 
-        if (!email || !passwordOrPin) return null;
+      if (!email || !passwordOrPin) return;
 
-        return {
-          email,
-          passwordOrPin,
-          name,
-          role
-        };
-      })
-      .filter((acc): acc is AdminAccount => acc !== null);
+      accounts.push({
+        email,
+        passwordOrPin,
+        name,
+        role
+      });
+    });
 
     if (accounts.length === 0) return DEFAULT_ADMINS;
 
