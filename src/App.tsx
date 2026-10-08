@@ -19,16 +19,27 @@ import {
   fetchAppsFromCsv,
   fetchNotificationsFromCsv,
   fetchPermissionsFromCsv,
-  fetchCloudData,
-  saveCloudData,
   DEFAULT_SHEET_CONFIG,
   getStoredTickets,
   saveSupportTicket,
   updateTicketStatus,
   pushToGasWebhook
 } from './services/sheetsService';
+import {
+  subscribeApps,
+  saveAppToFirestore,
+  deleteAppFromFirestore,
+  seedInitialAppsIfEmpty,
+  subscribeTickets,
+  saveTicketToFirestore,
+  updateTicketStatusInFirestore,
+  deleteTicketFromFirestore,
+  getPortalConfigFromFirestore,
+  savePortalConfigToFirestore,
+  testFirestoreConnection
+} from './services/firestoreService';
 import { signInWithGoogleOAuth } from './services/googleAuthService';
-import { SearchX, Filter, Plus, ShieldCheck, X, Check, Edit3, ShieldAlert, LogOut, FileSpreadsheet, Inbox } from 'lucide-react';
+import { SearchX, Filter, Plus, ShieldCheck, X, Check, Edit3, ShieldAlert, LogOut, FileSpreadsheet, Inbox, Cloud } from 'lucide-react';
 
 export default function App() {
   // Admin Session State
@@ -118,11 +129,7 @@ export default function App() {
   };
 
   // Google Sheets Sync
-  const syncDataFromSheets = async (
-    configToUse = sheetConfig,
-    cloudCustomApps?: WebAppItem[],
-    cloudDeletedIds?: string[]
-  ) => {
+  const syncDataFromSheets = async (configToUse = sheetConfig) => {
     setIsSyncing(true);
     setSyncError(null);
     let hasError = false;
@@ -131,35 +138,21 @@ export default function App() {
       const appsUrl = configToUse.appsCsvUrl || DEFAULT_SHEET_CONFIG.appsCsvUrl;
       const notisUrl = configToUse.notificationsCsvUrl || DEFAULT_SHEET_CONFIG.notificationsCsvUrl;
 
-      // 1. Fetch Apps
+      // 1. Fetch Apps từ Sheets và đồng bộ trực tiếp lên Firestore
       if (appsUrl) {
         try {
           const fetchedApps = await fetchAppsFromCsv(appsUrl);
           if (fetchedApps && fetchedApps.length > 0) {
-            setApps((prevApps) => {
-              const activeDeleted = new Set(cloudDeletedIds || deletedAppIds);
-              const filteredSheetApps = fetchedApps.filter((a) => !activeDeleted.has(a.id));
-
-              const sheetUrls = new Set(filteredSheetApps.map((a) => a.url.toLowerCase().trim()));
-              const sheetTitles = new Set(filteredSheetApps.map((a) => a.title.toLowerCase().trim()));
-
-              // Giữ lại các tiện ích admin thêm/sửa trên web (từ Cloud hoặc từ state hiện tại)
-              const baseCustom = cloudCustomApps || prevApps.filter((a) => a.isCustom || a.id.startsWith('custom-'));
-              const webCustomApps = baseCustom.filter(
-                (a) =>
-                  !activeDeleted.has(a.id) &&
-                  !sheetUrls.has(a.url.toLowerCase().trim()) &&
-                  !sheetTitles.has(a.title.toLowerCase().trim())
-              );
-
-              const merged = [...filteredSheetApps, ...webCustomApps];
-              try {
-                localStorage.setItem('fpt_portal_cached_apps', JSON.stringify(merged));
-              } catch {
-                // ignore
-              }
-              return merged;
-            });
+            // Lưu các app từ Google Sheets lên Firestore
+            for (const item of fetchedApps) {
+              await saveAppToFirestore(item).catch(() => null);
+            }
+            setApps(fetchedApps);
+            try {
+              localStorage.setItem('fpt_portal_cached_apps', JSON.stringify(fetchedApps));
+            } catch {
+              // ignore
+            }
           }
         } catch (err: any) {
           hasError = true;
@@ -196,7 +189,8 @@ export default function App() {
         const updatedConfig = { ...configToUse, lastSynced: timeStr, syncError: undefined };
         setSheetConfig(updatedConfig);
         saveStoredConfig(updatedConfig);
-        showToast('Đồng bộ dữ liệu từ Google Sheets thành công!');
+        await savePortalConfigToFirestore(updatedConfig).catch(() => null);
+        showToast('Đồng bộ dữ liệu từ Google Sheets & đã lưu vào Firestore!');
       }
     } catch (err) {
       console.error('Lỗi khi đồng bộ Google Sheets:', err);
@@ -205,52 +199,69 @@ export default function App() {
     }
   };
 
-  // Sync on initial mount
+  // Tự động nạp dữ liệu từ Firestore và lắng nghe thời gian thực khi load trang
   useEffect(() => {
-    const initSync = async () => {
-      let configToSync = sheetConfig.appsCsvUrl ? sheetConfig : DEFAULT_SHEET_CONFIG;
-      let loadedCustomApps: WebAppItem[] | undefined;
-      let loadedDeletedIds: string[] | undefined;
+    // 1. Kiểm tra kết nối Firestore
+    testFirestoreConnection();
 
-      // 1. Tải Cloud Data chung (đồng bộ giữa tất cả thiết bị và người dùng)
-      try {
-        const cloudData = await fetchCloudData();
-        if (cloudData) {
-          if (cloudData.config && (cloudData.config.appsCsvUrl || cloudData.config.notificationsCsvUrl)) {
-            setSheetConfig(cloudData.config);
-            configToSync = cloudData.config;
-          }
-          if (cloudData.customApps && cloudData.customApps.length > 0) {
-            loadedCustomApps = cloudData.customApps;
-            setApps(cloudData.customApps);
-          }
-          if (cloudData.deletedAppIds && cloudData.deletedAppIds.length > 0) {
-            loadedDeletedIds = cloudData.deletedAppIds;
-            setDeletedAppIds(cloudData.deletedAppIds);
-          }
-          if (cloudData.tickets && cloudData.tickets.length > 0) {
-            setTickets(cloudData.tickets);
-          }
+    // 2. Lắng nghe WebApps theo thời gian thực từ Firestore (Realtime onSnapshot)
+    const unsubscribeApps = subscribeApps(async (firestoreApps) => {
+      if (firestoreApps && firestoreApps.length > 0) {
+        setApps(firestoreApps);
+        try {
+          localStorage.setItem('fpt_portal_cached_apps', JSON.stringify(firestoreApps));
+        } catch {
+          // ignore
         }
-      } catch {
-        // ignore
+      } else {
+        // Nếu lần đầu Firestore còn trống, tự động nạp danh sách tiện ích ban đầu lên Firestore
+        const seeded = await seedInitialAppsIfEmpty(DEFAULT_APPS);
+        setApps(seeded);
       }
+    }, (err) => {
+      console.warn('Lỗi lắng nghe Firestore apps:', err);
+    });
 
-      // 2. Đồng bộ trực tiếp từ Google Sheets với cache-busting
-      await syncDataFromSheets(configToSync, loadedCustomApps, loadedDeletedIds);
+    // 3. Lắng nghe Hộp thư yêu cầu hỗ trợ theo thời gian thực từ Firestore
+    const unsubscribeTickets = subscribeTickets((firestoreTickets) => {
+      if (firestoreTickets) {
+        setTickets(firestoreTickets);
+        try {
+          localStorage.setItem('fpt_portal_cached_tickets', JSON.stringify(firestoreTickets));
+        } catch {
+          // ignore
+        }
+      }
+    }, (err) => {
+      console.warn('Lỗi lắng nghe Firestore tickets:', err);
+    });
+
+    // 4. Lấy cấu hình hệ thống đã lưu trên Firestore (nếu có)
+    getPortalConfigFromFirestore().then((cloudConfig) => {
+      if (cloudConfig && (cloudConfig.appsCsvUrl || cloudConfig.notificationsCsvUrl)) {
+        setSheetConfig((prev) => ({ ...prev, ...cloudConfig }));
+      }
+    }).catch(() => null);
+
+    return () => {
+      unsubscribeApps();
+      unsubscribeTickets();
     };
-
-    initSync();
   }, []);
 
   const handleSaveSheetConfig = async (newConfig: GoogleSheetsConfig) => {
     setSheetConfig(newConfig);
     saveStoredConfig(newConfig);
+    try {
+      await savePortalConfigToFirestore(newConfig);
+    } catch (err) {
+      console.warn('Lỗi lưu cấu hình lên Firestore:', err);
+    }
     await syncDataFromSheets(newConfig);
     setIsSheetModalOpen(false);
   };
 
-  const handleResetToDefault = () => {
+  const handleResetToDefault = async () => {
     setApps(DEFAULT_APPS);
     setNotifications(DEFAULT_NOTIFICATIONS);
     setSheetConfig(DEFAULT_SHEET_CONFIG);
@@ -261,11 +272,12 @@ export default function App() {
     try {
       localStorage.removeItem('fpt_portal_cached_apps');
       localStorage.removeItem('fpt_portal_cached_notis');
-    } catch {
-      // ignore
+      await seedInitialAppsIfEmpty(DEFAULT_APPS);
+      await savePortalConfigToFirestore(DEFAULT_SHEET_CONFIG);
+    } catch (err) {
+      console.warn('Lỗi reset Firestore:', err);
     }
-    saveCloudData({ config: DEFAULT_SHEET_CONFIG, customApps: [], deletedAppIds: [] });
-    showToast('Đã khôi phục dữ liệu ban đầu!');
+    showToast('Đã khôi phục dữ liệu ban đầu lên Firestore Cloud!');
     setIsSheetModalOpen(false);
   };
 
@@ -400,81 +412,103 @@ export default function App() {
     showToast('Đã đăng xuất quyền Admin, trở về quyền Người dùng.');
   };
 
-  // THÊM/SỬA TIỆN ÍCH TRÊN WEB (Lưu lên Cloud cho mọi máy thấy & đẩy sang GAS Webhook nếu có)
-  const handleSaveApp = (updatedApp: WebAppItem) => {
+  // THÊM/SỬA TIỆN ÍCH TRÊN WEB (Lưu trực tiếp lên Cloud Firestore cho mọi máy thấy ngay lập tức)
+  const handleSaveApp = async (updatedApp: WebAppItem) => {
     const appWithCustomFlag: WebAppItem = {
       ...updatedApp,
       isCustom: true,
       updatedAt: new Date().toISOString()
     };
 
+    // Cập nhật giao diện ngay lập tức
     setApps((prevApps) => {
       const exists = prevApps.some((a) => a.id === appWithCustomFlag.id);
-      let newApps: WebAppItem[];
-      if (exists) {
-        newApps = prevApps.map((a) => (a.id === appWithCustomFlag.id ? appWithCustomFlag : a));
-        showToast(`Đã lưu tiện ích "${appWithCustomFlag.title}" thành công!`);
-      } else {
-        newApps = [...prevApps, appWithCustomFlag];
-        showToast(`Đã thêm mới tiện ích "${appWithCustomFlag.title}" thành công!`);
-      }
-
-      // 1. Lưu Local
+      const next = exists
+        ? prevApps.map((a) => (a.id === appWithCustomFlag.id ? appWithCustomFlag : a))
+        : [...prevApps, appWithCustomFlag];
       try {
-        localStorage.setItem('fpt_portal_cached_apps', JSON.stringify(newApps));
+        localStorage.setItem('fpt_portal_cached_apps', JSON.stringify(next));
       } catch {
         // ignore
       }
-
-      // 2. Lọc các custom apps để lưu lên Cloud Database cho mọi máy cùng thấy
-      const customAppsToSave = newApps.filter((a) => a.isCustom || a.id.startsWith('custom-'));
-      saveCloudData({ customApps: customAppsToSave, deletedAppIds });
-
-      return newApps;
+      return next;
     });
 
-    // 3. Nếu cấu hình Webhook Google Apps Script, ghi trực tiếp vào Google Sheets
+    // 1. Lưu trực tiếp lên Cloud Firestore Database
+    try {
+      await saveAppToFirestore(appWithCustomFlag);
+      showToast(`Đã lưu tiện ích "${appWithCustomFlag.title}" lên Firestore Cloud!`);
+    } catch (err: any) {
+      console.error('Lỗi khi lưu Firestore:', err);
+      showToast(`Lỗi lưu Firestore: ${err?.message || 'Không thể lưu'}`);
+    }
+
+    // 2. Nếu cấu hình Webhook Google Apps Script, ghi trực tiếp vào Google Sheets
     if (sheetConfig.gasWebhookUrl) {
       pushToGasWebhook(sheetConfig.gasWebhookUrl, { action: 'saveApp', app: appWithCustomFlag });
     }
   };
 
-  const handleDeleteApp = (appId: string) => {
+  const handleDeleteApp = async (appId: string) => {
+    const target = apps.find((a) => a.id === appId);
+
+    // Cập nhật giao diện ngay lập tức
     setApps((prevApps) => {
-      const target = prevApps.find((a) => a.id === appId);
-      const newApps = prevApps.filter((a) => a.id !== appId);
+      const next = prevApps.filter((a) => a.id !== appId);
       try {
-        localStorage.setItem('fpt_portal_cached_apps', JSON.stringify(newApps));
+        localStorage.setItem('fpt_portal_cached_apps', JSON.stringify(next));
       } catch {
         // ignore
       }
-
-      const updatedDeletedIds = Array.from(new Set([...deletedAppIds, appId]));
-      setDeletedAppIds(updatedDeletedIds);
-
-      const customAppsToSave = newApps.filter((a) => a.isCustom || a.id.startsWith('custom-'));
-      saveCloudData({ customApps: customAppsToSave, deletedAppIds: updatedDeletedIds });
-
-      showToast(`Đã xóa tiện ích "${target?.title || appId}" thành công!`);
-      return newApps;
+      return next;
     });
+
+    // 1. Xóa trực tiếp khỏi Cloud Firestore
+    try {
+      await deleteAppFromFirestore(appId);
+      showToast(`Đã xóa tiện ích "${target?.title || appId}" khỏi Firestore Cloud!`);
+    } catch (err: any) {
+      console.error('Lỗi khi xóa khỏi Firestore:', err);
+      showToast(`Lỗi xóa Firestore: ${err?.message || 'Không thể xóa'}`);
+    }
 
     if (sheetConfig.gasWebhookUrl) {
       pushToGasWebhook(sheetConfig.gasWebhookUrl, { action: 'deleteApp', appId });
     }
   };
 
-  // CHỨC NĂNG 4: XỬ LÝ GỬI YÊU CẦU HỖ TRỢ VÀ LƯU HỘP THƯ
+  // CHỨC NĂNG: XỬ LÝ GỬI YÊU CẦU HỖ TRỢ VÀ LƯU VÀO CLOUD FIRESTORE
   const handleSubmitTicket = async (ticket: SupportTicket) => {
-    const updated = await saveSupportTicket(ticket);
-    setTickets(updated);
-    showToast(`Đã tiếp nhận yêu cầu hỗ trợ từ "${ticket.name}"!`);
+    try {
+      await saveTicketToFirestore(ticket);
+      showToast(`Đã tiếp nhận yêu cầu hỗ trợ và lưu vào Firestore!`);
+    } catch (err: any) {
+      console.error('Lỗi lưu ticket Firestore:', err);
+      const updated = await saveSupportTicket(ticket);
+      setTickets(updated);
+      showToast(`Đã tiếp nhận yêu cầu hỗ trợ từ "${ticket.name}"!`);
+    }
   };
 
   const handleUpdateTicketStatus = async (ticketId: string, status: 'new' | 'resolved') => {
-    const updated = await updateTicketStatus(ticketId, status);
-    setTickets(updated);
-    showToast('Đã cập nhật trạng thái yêu cầu hỗ trợ.');
+    try {
+      await updateTicketStatusInFirestore(ticketId, status);
+      showToast(status === 'resolved' ? 'Đã đánh dấu đã xử lý trên Firestore!' : 'Đã mở lại trạng thái trên Firestore!');
+    } catch (err: any) {
+      console.error('Lỗi cập nhật ticket Firestore:', err);
+      const updated = await updateTicketStatus(ticketId, status);
+      setTickets(updated);
+      showToast('Đã cập nhật trạng thái yêu cầu hỗ trợ.');
+    }
+  };
+
+  const handleDeleteTicket = async (ticketId: string) => {
+    try {
+      await deleteTicketFromFirestore(ticketId);
+      showToast('Đã xóa yêu cầu hỗ trợ khỏi Firestore!');
+    } catch (err: any) {
+      console.error('Lỗi xóa ticket Firestore:', err);
+    }
   };
 
   // Categories list
@@ -614,6 +648,7 @@ export default function App() {
             onOpenSheetConfig={() => setIsSheetModalOpen(true)}
             tickets={tickets}
             onUpdateTicketStatus={handleUpdateTicketStatus}
+            onDeleteTicket={handleDeleteTicket}
             onSyncNow={() => syncDataFromSheets(sheetConfig)}
             isSyncing={isSyncing}
             googleClientId={sheetConfig.googleClientId}
@@ -658,7 +693,7 @@ export default function App() {
                 <div className="flex items-center gap-2 font-medium text-center sm:text-left">
                   <ShieldCheck size={17} className="text-emerald-200 shrink-0" />
                   <span>
-                    <strong>Quản trị viên ({currentAdminUser?.name || 'Admin'}):</strong> Mọi thay đổi bạn sửa tại đây được tự động lưu lên đám mây, các máy khác đều thấy ngay!
+                    <strong>Quản trị viên ({currentAdminUser?.name || 'Admin'}):</strong> Mọi thao tác thêm/sửa/xóa được lưu trực tiếp lên Google Cloud Firestore (homepage-35a0f) và cập nhật thời gian thực!
                   </span>
                 </div>
                 <div className="flex items-center gap-2 shrink-0">

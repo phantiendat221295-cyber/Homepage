@@ -140,7 +140,7 @@ export const GoogleSheetsModal: React.FC<GoogleSheetsModalProps> = ({
                   Dữ liệu hiện tại: {totalApps} Webapps • {totalNotis} Thông báo
                 </div>
                 <div className="text-[11px] sm:text-xs text-emerald-700">
-                  {lastSynced ? `Lần cập nhật gần nhất: ${lastSynced}` : 'Đang sử dụng dữ liệu mặc định chuẩn'}
+                  {lastSynced ? `Lần cập nhật gần nhất: ${lastSynced}` : 'Đã kết nối Google Cloud Firestore (homepage-35a0f)'}
                 </div>
               </div>
             </div>

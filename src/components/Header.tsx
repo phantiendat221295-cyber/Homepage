@@ -144,6 +144,15 @@ export const Header: React.FC<HeaderProps> = ({
             )}
           </button>
 
+          {/* Firestore Cloud Sync Badge */}
+          <div
+            title="Dữ liệu đồng bộ trực tiếp với Google Firestore (homepage-35a0f)"
+            className="hidden xl:flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl border border-amber-200 bg-amber-50/80 text-amber-800 text-xs font-semibold select-none"
+          >
+            <span className="w-2 h-2 rounded-full bg-amber-500 animate-pulse shrink-0" />
+            <span>Firestore Cloud</span>
+          </div>
+
           {/* Google Sheets Sync Button */}
           <button
             onClick={onOpenSheetConfig}

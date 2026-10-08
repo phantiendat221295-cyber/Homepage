@@ -1,0 +1,26 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Tiện ích Webapps: Cho phép đọc công khai để sinh viên và giảng viên truy cập portal
+    match /apps/{appId} {
+      allow read: if true;
+      allow write: if true; // Lưu ý: Có thể siết chặt theo request.auth khi bật Firebase Auth
+    }
+
+    // Yêu cầu hỗ trợ: Mọi người có thể gửi yêu cầu hỗ trợ, đọc và cập nhật trạng thái
+    match /support_tickets/{ticketId} {
+      allow read, create, update: if true;
+      allow delete: if true;
+    }
+
+    // Cấu hình hệ thống & Google Sheets
+    match /settings/{settingId} {
+      allow read, write: if true;
+    }
+
+    // Thông báo đào tạo
+    match /notifications/{notificationId} {
+      allow read, write: if true;
+    }
+  }
+}

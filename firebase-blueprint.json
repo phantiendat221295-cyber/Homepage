@@ -1,0 +1,88 @@
+{
+  "entities": {
+    "WebApp": {
+      "title": "WebApp",
+      "description": "Thông tin ứng dụng web và tiện ích hỗ trợ quản lý đào tạo FPT",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "title": { "type": "string", "maxLength": 200 },
+        "description": { "type": "string", "maxLength": 1000 },
+        "url": { "type": "string", "maxLength": 2048 },
+        "category": { "type": "string", "maxLength": 100 },
+        "icon": { "type": "string", "maxLength": 50 },
+        "tag": { "type": "string", "maxLength": 50 },
+        "colorTheme": { "type": "string", "maxLength": 30 },
+        "badge": { "type": "string", "maxLength": 50 },
+        "isExternal": { "type": "boolean" },
+        "isCustom": { "type": "boolean" },
+        "updatedAt": { "type": "string", "maxLength": 50 }
+      },
+      "required": ["title", "url", "category"]
+    },
+    "SupportTicket": {
+      "title": "SupportTicket",
+      "description": "Yêu cầu hỗ trợ từ sinh viên và giảng viên gửi về ban quản trị",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "name": { "type": "string", "maxLength": 100 },
+        "emailOrCode": { "type": "string", "maxLength": 100 },
+        "category": { "type": "string", "maxLength": 100 },
+        "content": { "type": "string", "maxLength": 2000 },
+        "createdAt": { "type": "string", "maxLength": 50 },
+        "status": { "type": "string", "enum": ["new", "resolved"] },
+        "updatedAt": { "type": "string", "maxLength": 50 }
+      },
+      "required": ["name", "emailOrCode", "content", "status"]
+    },
+    "PortalConfig": {
+      "title": "PortalConfig",
+      "description": "Cấu hình liên kết Google Sheets và Google OAuth Client ID của cổng thông tin",
+      "type": "object",
+      "properties": {
+        "appsCsvUrl": { "type": "string", "maxLength": 2048 },
+        "notificationsCsvUrl": { "type": "string", "maxLength": 2048 },
+        "permissionsCsvUrl": { "type": "string", "maxLength": 2048 },
+        "gasWebhookUrl": { "type": "string", "maxLength": 2048 },
+        "googleClientId": { "type": "string", "maxLength": 256 },
+        "lastSynced": { "type": "string", "maxLength": 50 },
+        "autoSync": { "type": "boolean" },
+        "updatedAt": { "type": "string", "maxLength": 50 }
+      }
+    },
+    "Notification": {
+      "title": "Notification",
+      "description": "Thông báo sơ kết đào tạo hoặc tin tức từ nhà trường",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "title": { "type": "string", "maxLength": 300 },
+        "date": { "type": "string", "maxLength": 50 },
+        "url": { "type": "string", "maxLength": 2048 },
+        "color": { "type": "string", "maxLength": 30 },
+        "content": { "type": "string", "maxLength": 2000 },
+        "isImportant": { "type": "boolean" }
+      },
+      "required": ["title", "date"]
+    }
+  },
+  "firestore": {
+    "/apps/{appId}": {
+      "schema": "WebApp",
+      "description": "Danh sách các webapp tiện ích đào tạo được lưu trên Firestore"
+    },
+    "/support_tickets/{ticketId}": {
+      "schema": "SupportTicket",
+      "description": "Danh sách yêu cầu phản ánh, hỗ trợ đào tạo"
+    },
+    "/settings/{settingId}": {
+      "schema": "PortalConfig",
+      "description": "Cấu hình hệ thống và link Google Sheets"
+    },
+    "/notifications/{notificationId}": {
+      "schema": "Notification",
+      "description": "Danh sách các thông báo đào tạo"
+    }
+  }
+}

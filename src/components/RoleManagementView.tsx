@@ -40,6 +40,7 @@ interface RoleManagementViewProps {
   onOpenSheetConfig: () => void;
   tickets: SupportTicket[];
   onUpdateTicketStatus: (ticketId: string, status: 'new' | 'resolved') => void;
+  onDeleteTicket?: (ticketId: string) => void;
   onSyncNow?: () => Promise<void> | void;
   isSyncing?: boolean;
   googleClientId?: string;
@@ -63,6 +64,7 @@ export const RoleManagementView: React.FC<RoleManagementViewProps> = ({
   onOpenSheetConfig,
   tickets,
   onUpdateTicketStatus,
+  onDeleteTicket,
   onSyncNow,
   isSyncing = false,
   googleClientId,
@@ -412,17 +414,10 @@ export const RoleManagementView: React.FC<RoleManagementViewProps> = ({
                         </td>
 
                         <td className="py-3 px-4">
-                          {app.isCustom || app.id.startsWith('custom-') ? (
-                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold bg-emerald-100 text-emerald-800">
-                              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
-                              Tạo trên Web
-                            </span>
-                          ) : (
-                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold bg-blue-100 text-blue-800">
-                              <span className="w-1.5 h-1.5 rounded-full bg-blue-500" />
-                              Google Sheets
-                            </span>
-                          )}
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold bg-amber-100 text-amber-900 border border-amber-200">
+                            <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse" />
+                            Firestore Cloud
+                          </span>
                         </td>
 
                         <td className="py-3 px-4 text-right">
@@ -515,15 +510,31 @@ export const RoleManagementView: React.FC<RoleManagementViewProps> = ({
                           {t.status === 'new' ? '• Chờ xử lý' : '✓ Đã xử lý'}
                         </span>
 
-                        <button
-                          type="button"
-                          onClick={() =>
-                            onUpdateTicketStatus(t.id, t.status === 'new' ? 'resolved' : 'new')
-                          }
-                          className="px-3 py-1 rounded-lg bg-white border border-slate-200 hover:bg-slate-100 text-slate-700 text-xs font-medium transition-colors cursor-pointer"
-                        >
-                          {t.status === 'new' ? 'Đánh dấu đã giải quyết' : 'Đánh dấu chờ xử lý'}
-                        </button>
+                        <div className="flex items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() =>
+                              onUpdateTicketStatus(t.id, t.status === 'new' ? 'resolved' : 'new')
+                            }
+                            className="px-3 py-1 rounded-lg bg-white border border-slate-200 hover:bg-slate-100 text-slate-700 text-xs font-medium transition-colors cursor-pointer"
+                          >
+                            {t.status === 'new' ? 'Đánh dấu đã giải quyết' : 'Đánh dấu chờ xử lý'}
+                          </button>
+                          {onDeleteTicket && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                if (window.confirm('Bạn có chắc muốn xóa yêu cầu hỗ trợ này khỏi Firestore?')) {
+                                  onDeleteTicket(t.id);
+                                }
+                              }}
+                              className="p-1.5 rounded-lg bg-white border border-slate-200 hover:bg-rose-50 text-slate-400 hover:text-rose-600 transition-colors cursor-pointer"
+                              title="Xóa yêu cầu khỏi Firestore"
+                            >
+                              <Trash2 size={13} />
+                            </button>
+                          )}
+                        </div>
                       </div>
                     </div>
                   ))}
