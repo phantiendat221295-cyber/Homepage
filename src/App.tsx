@@ -41,25 +41,24 @@ import {
 import { signInWithGoogleOAuth } from './services/googleAuthService';
 import { SearchX, Filter, Plus, ShieldCheck, X, Check, Edit3, ShieldAlert, LogOut, FileSpreadsheet, Inbox, Cloud } from 'lucide-react';
 
+// DANH SÁCH ADMIN HARDCODE CỐ ĐỊNH (Khai báo bên ngoài Component để tránh crash)
+const ADMIN_WHITELIST = [
+  'datpt60@fpt.edu.vn',
+  'phantiendat221295@gmail.com',
+  'dienvnn@fpt.edu.vn',
+  'thuanl2@fpt.edu.vn',
+  'vylnu@fpt.edu.vn',
+  'loiqt@fpt.edu.vn',
+  'daotaopoly.dna@fpt.edu.vn'
+];
+
+const checkIsOwnerEmail = (email?: string): boolean => {
+  if (!email) return false;
+  const clean = email.toLowerCase().trim();
+  return ADMIN_WHITELIST.some(allowedEmail => allowedEmail.toLowerCase().trim() === clean);
+};
+
 export default function App() {
-  // -------------------------------------------------------------
-  // DANH SÁCH ADMIN HARDCODE CỐ ĐỊNH TRONG CODE
-  // -------------------------------------------------------------
-  const ADMIN_WHITELIST = useMemo(() => [
-    'datpt60@fpt.edu.vn',
-    'phantiendat221295@gmail.com',
-    'dienvnn@fpt.edu.vn',
-    'thuanl2@fpt.edu.vn',
-    'vylnu@fpt.edu.vn',
-    'loiqt@fpt.edu.vn',
-    'daotaopoly.dna@fpt.edu.vn'
-  ], []);
-
-  const checkIsOwnerEmail = (email: string) => {
-    const clean = email.toLowerCase().trim();
-    return ADMIN_WHITELIST.some(allowedEmail => allowedEmail.toLowerCase().trim() === clean);
-  };
-
   // Admin Session State
   const [currentAdminUser, setCurrentAdminUser] = useState<AdminAccount | null>(() => {
     try {
@@ -76,25 +75,21 @@ export default function App() {
     return null;
   });
 
-  // Re-verify session khi trang web load/mount (Xử lý dứt điểm tình trạng bị lưu Cache)
+  // Re-verify session khi trang web load (Đá ngay tài khoản bị xóa khỏi whitelist)
   useEffect(() => {
     try {
       const saved = sessionStorage.getItem('fpt_portal_admin_user');
       if (saved) {
         const parsed: AdminAccount = JSON.parse(saved);
-        if (parsed?.email) {
-          const isStillValid = checkIsOwnerEmail(parsed.email);
-          if (!isStillValid) {
-            // Nếu email đã bị gỡ khỏi danh sách -> Xóa cache & Ép đăng xuất ngay lập tức
-            sessionStorage.removeItem('fpt_portal_admin_user');
-            setCurrentAdminUser(null);
-          }
+        if (parsed?.email && !checkIsOwnerEmail(parsed.email)) {
+          sessionStorage.removeItem('fpt_portal_admin_user');
+          setCurrentAdminUser(null);
         }
       }
     } catch {
       // ignore
     }
-  }, [ADMIN_WHITELIST]);
+  }, []);
 
   // Current Role
   const currentRole: 'user' | 'admin' = currentAdminUser ? 'admin' : 'user';
