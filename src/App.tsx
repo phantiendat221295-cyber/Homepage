@@ -343,7 +343,7 @@ export default function App() {
     const matched = accounts.find(
       (acc) => acc.email.toLowerCase().trim() === cleanEmail && acc.role === 'admin'
     );
-    const isOwner = cleanEmail === 'datpt60@fpt.edu.vn' || cleanEmail === 'phantiendat221295@gmail.com';
+    const isOwner = cleanEmail === 'datpt60@fpt.edu.vn' || cleanEmail === 'dienvnn@fpt.edu.vn'|| cleanEmail === 'phantiendat221295@gmail.com';
 
     if (matched || isOwner) {
       const adminAcc: AdminAccount = {
@@ -382,7 +382,7 @@ export default function App() {
     const matchedFromSheet = accounts.find(
       (acc) => acc.email.toLowerCase().trim() === cleanInput && acc.role === 'admin'
     );
-    const isOwner = cleanInput === 'datpt60@fpt.edu.vn' || cleanInput === 'phantiendat221295@gmail.com';
+    const isOwner = cleanInput === 'datpt60@fpt.edu.vn' || cleanEmail === 'dienvnn@fpt.edu.vn' || cleanInput === 'phantiendat221295@gmail.com';
 
     if (matchedFromSheet || isOwner) {
       const adminAcc: AdminAccount = matchedFromSheet || {
