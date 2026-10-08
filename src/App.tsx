@@ -27,6 +27,7 @@ import {
   updateTicketStatus,
   pushToGasWebhook
 } from './services/sheetsService';
+import { signInWithGoogleOAuth } from './services/googleAuthService';
 import { SearchX, Filter, Plus, ShieldCheck, X, Check, Edit3, ShieldAlert, LogOut, FileSpreadsheet, Inbox } from 'lucide-react';
 
 export default function App() {
@@ -97,6 +98,7 @@ export default function App() {
   const [isSyncing, setIsSyncing] = useState(false);
   const [lastSyncedTime, setLastSyncedTime] = useState<string | undefined>(sheetConfig.lastSynced);
   const [syncError, setSyncError] = useState<string | null>(null);
+  const [deletedAppIds, setDeletedAppIds] = useState<string[]>([]);
 
   // Modals
   const [isSheetModalOpen, setIsSheetModalOpen] = useState(false);
@@ -116,7 +118,11 @@ export default function App() {
   };
 
   // Google Sheets Sync
-  const syncDataFromSheets = async (configToUse = sheetConfig) => {
+  const syncDataFromSheets = async (
+    configToUse = sheetConfig,
+    cloudCustomApps?: WebAppItem[],
+    cloudDeletedIds?: string[]
+  ) => {
     setIsSyncing(true);
     setSyncError(null);
     let hasError = false;
@@ -131,20 +137,27 @@ export default function App() {
           const fetchedApps = await fetchAppsFromCsv(appsUrl);
           if (fetchedApps && fetchedApps.length > 0) {
             setApps((prevApps) => {
-              // Google Sheets là nguồn dữ liệu chuẩn cao nhất
-              const sheetUrls = new Set(fetchedApps.map((a) => a.url.toLowerCase().trim()));
-              const sheetTitles = new Set(fetchedApps.map((a) => a.title.toLowerCase().trim()));
+              const activeDeleted = new Set(cloudDeletedIds || deletedAppIds);
+              const filteredSheetApps = fetchedApps.filter((a) => !activeDeleted.has(a.id));
 
-              // Giữ lại các tiện ích admin thêm trên web (nếu chưa có trong sheet)
-              const webCustomApps = prevApps.filter(
+              const sheetUrls = new Set(filteredSheetApps.map((a) => a.url.toLowerCase().trim()));
+              const sheetTitles = new Set(filteredSheetApps.map((a) => a.title.toLowerCase().trim()));
+
+              // Giữ lại các tiện ích admin thêm/sửa trên web (từ Cloud hoặc từ state hiện tại)
+              const baseCustom = cloudCustomApps || prevApps.filter((a) => a.isCustom || a.id.startsWith('custom-'));
+              const webCustomApps = baseCustom.filter(
                 (a) =>
-                  !a.id.startsWith('app-') &&
+                  !activeDeleted.has(a.id) &&
                   !sheetUrls.has(a.url.toLowerCase().trim()) &&
                   !sheetTitles.has(a.title.toLowerCase().trim())
               );
 
-              const merged = [...fetchedApps, ...webCustomApps];
-              localStorage.setItem('fpt_portal_cached_apps', JSON.stringify(merged));
+              const merged = [...filteredSheetApps, ...webCustomApps];
+              try {
+                localStorage.setItem('fpt_portal_cached_apps', JSON.stringify(merged));
+              } catch {
+                // ignore
+              }
               return merged;
             });
           }
@@ -163,7 +176,11 @@ export default function App() {
           const fetchedNotis = await fetchNotificationsFromCsv(notisUrl);
           if (fetchedNotis && fetchedNotis.length > 0) {
             setNotifications(fetchedNotis);
-            localStorage.setItem('fpt_portal_cached_notis', JSON.stringify(fetchedNotis));
+            try {
+              localStorage.setItem('fpt_portal_cached_notis', JSON.stringify(fetchedNotis));
+            } catch {
+              // ignore
+            }
           }
         } catch (err: any) {
           console.warn('Lỗi fetch Thông báo:', err);
@@ -192,8 +209,10 @@ export default function App() {
   useEffect(() => {
     const initSync = async () => {
       let configToSync = sheetConfig.appsCsvUrl ? sheetConfig : DEFAULT_SHEET_CONFIG;
+      let loadedCustomApps: WebAppItem[] | undefined;
+      let loadedDeletedIds: string[] | undefined;
 
-      // 1. Tải Cloud Data chung
+      // 1. Tải Cloud Data chung (đồng bộ giữa tất cả thiết bị và người dùng)
       try {
         const cloudData = await fetchCloudData();
         if (cloudData) {
@@ -202,7 +221,12 @@ export default function App() {
             configToSync = cloudData.config;
           }
           if (cloudData.customApps && cloudData.customApps.length > 0) {
+            loadedCustomApps = cloudData.customApps;
             setApps(cloudData.customApps);
+          }
+          if (cloudData.deletedAppIds && cloudData.deletedAppIds.length > 0) {
+            loadedDeletedIds = cloudData.deletedAppIds;
+            setDeletedAppIds(cloudData.deletedAppIds);
           }
           if (cloudData.tickets && cloudData.tickets.length > 0) {
             setTickets(cloudData.tickets);
@@ -213,7 +237,7 @@ export default function App() {
       }
 
       // 2. Đồng bộ trực tiếp từ Google Sheets với cache-busting
-      await syncDataFromSheets(configToSync);
+      await syncDataFromSheets(configToSync, loadedCustomApps, loadedDeletedIds);
     };
 
     initSync();
@@ -231,6 +255,7 @@ export default function App() {
     setNotifications(DEFAULT_NOTIFICATIONS);
     setSheetConfig(DEFAULT_SHEET_CONFIG);
     saveStoredConfig(DEFAULT_SHEET_CONFIG);
+    setDeletedAppIds([]);
     setLastSyncedTime(undefined);
     setSyncError(null);
     try {
@@ -239,11 +264,12 @@ export default function App() {
     } catch {
       // ignore
     }
+    saveCloudData({ config: DEFAULT_SHEET_CONFIG, customApps: [], deletedAppIds: [] });
     showToast('Đã khôi phục dữ liệu ban đầu!');
     setIsSheetModalOpen(false);
   };
 
-  // CHỨC NĂNG: ĐĂNG NHẬP ADMIN (Kiểm tra trực tiếp từ Google Sheets, không hardcode mật khẩu)
+  // CHỨC NĂNG: ĐĂNG NHẬP ADMIN BẰNG EMAIL & MẬT KHẨU TỪ GOOGLE SHEETS
   const handleLoginAdmin = async (email: string, pin: string): Promise<boolean> => {
     const permissionsUrl = sheetConfig.permissionsCsvUrl || DEFAULT_SHEET_CONFIG.permissionsCsvUrl;
     let accounts: AdminAccount[] = [];
@@ -279,8 +305,56 @@ export default function App() {
     return false;
   };
 
-  // CHỨC NĂNG: ĐĂNG NHẬP ADMIN BẰNG TÀI KHOẢN GOOGLE
-  const handleLoginWithGoogle = async (googleEmail: string): Promise<boolean> => {
+  // CHỨC NĂNG 1: ĐĂNG NHẬP ADMIN BẰNG GOOGLE OAUTH POPUP CHÍNH THỨC (CÓ CẤP QUYỀN GOOGLE CONSENT)
+  const handleLoginWithGoogleOAuth = async (): Promise<boolean> => {
+    const clientId = sheetConfig.googleClientId || '';
+    if (!clientId) {
+      throw new Error('CLIENT_ID_MISSING: Chưa cấu hình Google OAuth Client ID');
+    }
+
+    // Mở Popup Google chính thức với consent screen
+    const googleProfile = await signInWithGoogleOAuth(clientId);
+
+    // Xác thực email với danh sách Admin trong Google Sheet
+    const permissionsUrl = sheetConfig.permissionsCsvUrl || DEFAULT_SHEET_CONFIG.permissionsCsvUrl;
+    let accounts: AdminAccount[] = [];
+
+    if (permissionsUrl) {
+      try {
+        accounts = await fetchPermissionsFromCsv(permissionsUrl);
+      } catch (err) {
+        console.warn('Lỗi tải danh sách phân quyền:', err);
+      }
+    }
+
+    const cleanEmail = googleProfile.email.toLowerCase().trim();
+    const matched = accounts.find(
+      (acc) => acc.email.toLowerCase().trim() === cleanEmail && acc.role === 'admin'
+    );
+    const isOwner = cleanEmail === 'datpt60@fpt.edu.vn' || cleanEmail === 'phantiendat221295@gmail.com';
+
+    if (matched || isOwner) {
+      const adminAcc: AdminAccount = {
+        email: googleProfile.email,
+        passwordOrPin: '',
+        name: googleProfile.name || matched?.name || 'Quản trị viên Google',
+        role: 'admin',
+        avatar: googleProfile.picture
+      };
+
+      setCurrentAdminUser(adminAcc);
+      sessionStorage.setItem('fpt_portal_admin_user', JSON.stringify(adminAcc));
+      showToast(`Đăng nhập Google thành công! Xin chào ${adminAcc.name}.`);
+      return true;
+    } else {
+      throw new Error(
+        `Tài khoản Google "${googleProfile.email}" không nằm trong danh sách phân quyền Admin của Google Sheets!`
+      );
+    }
+  };
+
+  // CHỨC NĂNG 2: XÁC THỰC EMAIL QUẢN TRỊ VIÊN ĐỐI SOÁT VỚI GOOGLE SHEETS
+  const handleLoginWithGoogleEmail = async (googleEmail: string): Promise<boolean> => {
     const permissionsUrl = sheetConfig.permissionsCsvUrl || DEFAULT_SHEET_CONFIG.permissionsCsvUrl;
     let accounts: AdminAccount[] = [];
 
@@ -293,13 +367,9 @@ export default function App() {
     }
 
     const cleanInput = googleEmail.toLowerCase().trim();
-
-    // Khớp tài khoản trong tab PhanQuyen của Google Sheet
     const matchedFromSheet = accounts.find(
       (acc) => acc.email.toLowerCase().trim() === cleanInput && acc.role === 'admin'
     );
-
-    // Hoặc email quản trị viên của chủ sở hữu hệ thống
     const isOwner = cleanInput === 'datpt60@fpt.edu.vn' || cleanInput === 'phantiendat221295@gmail.com';
 
     if (matchedFromSheet || isOwner) {
@@ -312,7 +382,7 @@ export default function App() {
 
       setCurrentAdminUser(adminAcc);
       sessionStorage.setItem('fpt_portal_admin_user', JSON.stringify(adminAcc));
-      showToast(`Đăng nhập Google thành công! Xin chào ${adminAcc.name}.`);
+      showToast(`Đăng nhập thành công! Xin chào ${adminAcc.name}.`);
       return true;
     }
 
@@ -330,17 +400,23 @@ export default function App() {
     showToast('Đã đăng xuất quyền Admin, trở về quyền Người dùng.');
   };
 
-  // THÊM/SỬA TIỆN ÍCH TRÊN WEB (Tự động lưu vĩnh viễn và đẩy sang GAS Webhook nếu có)
+  // THÊM/SỬA TIỆN ÍCH TRÊN WEB (Lưu lên Cloud cho mọi máy thấy & đẩy sang GAS Webhook nếu có)
   const handleSaveApp = (updatedApp: WebAppItem) => {
+    const appWithCustomFlag: WebAppItem = {
+      ...updatedApp,
+      isCustom: true,
+      updatedAt: new Date().toISOString()
+    };
+
     setApps((prevApps) => {
-      const exists = prevApps.some((a) => a.id === updatedApp.id);
+      const exists = prevApps.some((a) => a.id === appWithCustomFlag.id);
       let newApps: WebAppItem[];
       if (exists) {
-        newApps = prevApps.map((a) => (a.id === updatedApp.id ? updatedApp : a));
-        showToast(`Đã lưu tiện ích "${updatedApp.title}" thành công!`);
+        newApps = prevApps.map((a) => (a.id === appWithCustomFlag.id ? appWithCustomFlag : a));
+        showToast(`Đã lưu tiện ích "${appWithCustomFlag.title}" thành công!`);
       } else {
-        newApps = [...prevApps, updatedApp];
-        showToast(`Đã thêm mới tiện ích "${updatedApp.title}" thành công!`);
+        newApps = [...prevApps, appWithCustomFlag];
+        showToast(`Đã thêm mới tiện ích "${appWithCustomFlag.title}" thành công!`);
       }
 
       // 1. Lưu Local
@@ -350,15 +426,16 @@ export default function App() {
         // ignore
       }
 
-      // 2. Lưu lên Cloud Database
-      saveCloudData({ customApps: newApps });
+      // 2. Lọc các custom apps để lưu lên Cloud Database cho mọi máy cùng thấy
+      const customAppsToSave = newApps.filter((a) => a.isCustom || a.id.startsWith('custom-'));
+      saveCloudData({ customApps: customAppsToSave, deletedAppIds });
 
       return newApps;
     });
 
     // 3. Nếu cấu hình Webhook Google Apps Script, ghi trực tiếp vào Google Sheets
     if (sheetConfig.gasWebhookUrl) {
-      pushToGasWebhook(sheetConfig.gasWebhookUrl, { action: 'saveApp', app: updatedApp });
+      pushToGasWebhook(sheetConfig.gasWebhookUrl, { action: 'saveApp', app: appWithCustomFlag });
     }
   };
 
@@ -371,7 +448,13 @@ export default function App() {
       } catch {
         // ignore
       }
-      saveCloudData({ customApps: newApps });
+
+      const updatedDeletedIds = Array.from(new Set([...deletedAppIds, appId]));
+      setDeletedAppIds(updatedDeletedIds);
+
+      const customAppsToSave = newApps.filter((a) => a.isCustom || a.id.startsWith('custom-'));
+      saveCloudData({ customApps: customAppsToSave, deletedAppIds: updatedDeletedIds });
+
       showToast(`Đã xóa tiện ích "${target?.title || appId}" thành công!`);
       return newApps;
     });
@@ -512,7 +595,8 @@ export default function App() {
             currentRole={currentRole}
             currentAdminUser={currentAdminUser}
             onLoginAdmin={handleLoginAdmin}
-            onLoginWithGoogle={handleLoginWithGoogle}
+            onLoginWithGoogleOAuth={handleLoginWithGoogleOAuth}
+            onLoginWithGoogleEmail={handleLoginWithGoogleEmail}
             onLogoutAdmin={handleLogoutAdmin}
             apps={apps}
             onAddApp={() => {
@@ -532,6 +616,8 @@ export default function App() {
             onUpdateTicketStatus={handleUpdateTicketStatus}
             onSyncNow={() => syncDataFromSheets(sheetConfig)}
             isSyncing={isSyncing}
+            googleClientId={sheetConfig.googleClientId}
+            onSaveGoogleClientId={(id) => handleSaveSheetConfig({ ...sheetConfig, googleClientId: id })}
           />
         </main>
       ) : (

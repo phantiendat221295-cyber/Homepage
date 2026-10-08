@@ -84,6 +84,7 @@ export const getStoredConfig = (): GoogleSheetsConfig => {
 export const saveCloudData = async (data: {
   config?: GoogleSheetsConfig;
   customApps?: WebAppItem[];
+  deletedAppIds?: string[];
   tickets?: SupportTicket[];
 }): Promise<void> => {
   try {
@@ -105,10 +106,12 @@ export const saveCloudData = async (data: {
             appsCsvUrl: data.config.appsCsvUrl,
             notificationsCsvUrl: data.config.notificationsCsvUrl,
             permissionsCsvUrl: data.config.permissionsCsvUrl,
-            gasWebhookUrl: data.config.gasWebhookUrl
+            gasWebhookUrl: data.config.gasWebhookUrl,
+            googleClientId: data.config.googleClientId
           }
         : {}),
       ...(data.customApps ? { customApps: data.customApps } : {}),
+      ...(data.deletedAppIds ? { deletedAppIds: data.deletedAppIds } : {}),
       ...(data.tickets ? { tickets: data.tickets } : {}),
       updatedAt: new Date().toISOString()
     };
@@ -126,10 +129,11 @@ export const saveCloudData = async (data: {
   }
 };
 
-// Tải toàn bộ Cloud Data (config + customApps + tickets)
+// Tải toàn bộ Cloud Data (config + customApps + deletedAppIds + tickets)
 export const fetchCloudData = async (): Promise<{
   config?: GoogleSheetsConfig;
   customApps?: WebAppItem[];
+  deletedAppIds?: string[];
   tickets?: SupportTicket[];
 } | null> => {
   try {
@@ -146,12 +150,14 @@ export const fetchCloudData = async (): Promise<{
       notificationsCsvUrl: d.notificationsCsvUrl || DEFAULT_SHEET_CONFIG.notificationsCsvUrl,
       permissionsCsvUrl: d.permissionsCsvUrl || DEFAULT_SHEET_CONFIG.permissionsCsvUrl,
       gasWebhookUrl: d.gasWebhookUrl || '',
+      googleClientId: d.googleClientId || '',
       autoSync: true
     };
 
     return {
       config,
       customApps: Array.isArray(d.customApps) ? d.customApps : undefined,
+      deletedAppIds: Array.isArray(d.deletedAppIds) ? d.deletedAppIds : undefined,
       tickets: Array.isArray(d.tickets) ? d.tickets : undefined
     };
   } catch (err) {

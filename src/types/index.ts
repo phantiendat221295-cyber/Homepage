@@ -9,6 +9,8 @@ export interface WebAppItem {
   colorTheme?: 'blue' | 'green' | 'orange' | 'purple' | 'pink' | 'yellow' | 'mint' | 'cyan' | 'indigo' | 'slate';
   badge?: string;
   isExternal?: boolean;
+  isCustom?: boolean; // Được tạo hoặc chỉnh sửa trên Web
+  updatedAt?: string;
 }
 
 export interface NotificationItem {
@@ -34,6 +36,7 @@ export interface AdminAccount {
   passwordOrPin: string;
   name: string;
   role: 'admin' | 'user';
+  avatar?: string;
 }
 
 export interface SupportTicket {
@@ -51,6 +54,7 @@ export interface GoogleSheetsConfig {
   notificationsCsvUrl: string;
   permissionsCsvUrl?: string; // Link CSV tab 'PhanQuyen'
   gasWebhookUrl?: string;     // URL Google Apps Script Web App (Tùy chọn: Đồng bộ 2 chiều trực tiếp vào Sheet)
+  googleClientId?: string;    // Client ID Google Cloud OAuth (Xác thực Google chính chủ có popup)
   lastSynced?: string;
   autoSync: boolean;
   syncError?: string;

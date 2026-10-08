@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { X, ExternalLink, Check, RefreshCw, FileSpreadsheet, AlertCircle, Copy, Download, KeyRound, ShieldAlert } from 'lucide-react';
+import { X, ExternalLink, Check, RefreshCw, FileSpreadsheet, AlertCircle, Copy, Download, KeyRound, ShieldAlert, Lock } from 'lucide-react';
 import { GoogleSheetsConfig } from '../types';
 
 interface GoogleSheetsModalProps {
@@ -31,6 +31,7 @@ export const GoogleSheetsModal: React.FC<GoogleSheetsModalProps> = ({
   const [notisUrl, setNotisUrl] = useState(config.notificationsCsvUrl || '');
   const [permissionsUrl, setPermissionsUrl] = useState(config.permissionsCsvUrl || '');
   const [gasWebhookUrl, setGasWebhookUrl] = useState(config.gasWebhookUrl || '');
+  const [googleClientId, setGoogleClientId] = useState(config.googleClientId || '');
 
   if (!isOpen) return null;
 
@@ -41,6 +42,7 @@ export const GoogleSheetsModal: React.FC<GoogleSheetsModalProps> = ({
       notificationsCsvUrl: notisUrl.trim(),
       permissionsCsvUrl: permissionsUrl.trim(),
       gasWebhookUrl: gasWebhookUrl.trim(),
+      googleClientId: googleClientId.trim(),
       autoSync: true
     });
   };
@@ -218,6 +220,24 @@ export const GoogleSheetsModal: React.FC<GoogleSheetsModalProps> = ({
             />
             <p className="text-[11px] text-slate-500">
               Khi cấu hình, mọi thay đổi thêm/sửa/xóa trên web sẽ được tự động ghi thẳng vào file Google Sheet của bạn.
+            </p>
+          </div>
+
+          {/* Input 5: Google OAuth Client ID */}
+          <div className="space-y-1.5">
+            <label className="block text-xs sm:text-sm font-bold text-slate-700 flex items-center gap-1.5">
+              <Lock size={14} className="text-blue-600" />
+              <span>5. Google Cloud OAuth Client ID (Xác thực Google chính chủ có popup cho phép)</span>
+            </label>
+            <input
+              type="text"
+              value={googleClientId}
+              onChange={(e) => setGoogleClientId(e.target.value)}
+              placeholder="ví dụ: 123456789-xyz.apps.googleusercontent.com"
+              className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5 text-xs sm:text-sm text-slate-800 placeholder-slate-400 focus:bg-white focus:border-blue-500 focus:outline-none"
+            />
+            <p className="text-[11px] text-slate-500">
+              Kích hoạt nút Đăng nhập Google mở hộp thoại đăng nhập chính thức của Google (Google OAuth Consent). Email đăng nhập sẽ được đối soát tự động với danh sách Admin trong Google Sheet.
             </p>
           </div>
 

@@ -62,14 +62,15 @@ export const EditAppModal: React.FC<EditAppModalProps> = ({
       setCustomCategory('');
     } else {
       setFormData({
-        id: `app-custom-${Date.now()}`,
+        id: `custom-${Date.now()}`,
         title: '',
         description: '',
         url: 'https://',
         category: categories[0] || 'Quản lý đào tạo',
         icon: 'Sparkles',
         tag: 'webapp',
-        colorTheme: 'blue'
+        colorTheme: 'blue',
+        isCustom: true
       });
       setIsAddingNewCat(false);
       setCustomCategory('');
@@ -92,7 +93,9 @@ export const EditAppModal: React.FC<EditAppModalProps> = ({
       description: formData.description.trim(),
       url: formData.url.trim(),
       category: finalCategory,
-      id: formData.id || `app-${Date.now()}`
+      id: formData.id || `custom-${Date.now()}`,
+      isCustom: true,
+      updatedAt: new Date().toISOString()
     });
     onClose();
   };

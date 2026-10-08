@@ -18,7 +18,8 @@ import {
   Check,
   Clock,
   RefreshCw,
-  Sparkles
+  Sparkles,
+  X
 } from 'lucide-react';
 import { DynamicIcon } from './DynamicIcon';
 
@@ -26,7 +27,8 @@ interface RoleManagementViewProps {
   currentRole: 'user' | 'admin';
   currentAdminUser: AdminAccount | null;
   onLoginAdmin: (email: string, pin: string) => boolean | Promise<boolean>;
-  onLoginWithGoogle: (googleEmail: string) => boolean | Promise<boolean>;
+  onLoginWithGoogleOAuth: () => Promise<boolean>;
+  onLoginWithGoogleEmail: (email: string) => Promise<boolean>;
   onLogoutAdmin: () => void;
   apps: WebAppItem[];
   onAddApp: () => void;
@@ -40,13 +42,16 @@ interface RoleManagementViewProps {
   onUpdateTicketStatus: (ticketId: string, status: 'new' | 'resolved') => void;
   onSyncNow?: () => Promise<void> | void;
   isSyncing?: boolean;
+  googleClientId?: string;
+  onSaveGoogleClientId?: (clientId: string) => void;
 }
 
 export const RoleManagementView: React.FC<RoleManagementViewProps> = ({
   currentRole,
   currentAdminUser,
   onLoginAdmin,
-  onLoginWithGoogle,
+  onLoginWithGoogleOAuth,
+  onLoginWithGoogleEmail,
   onLogoutAdmin,
   apps,
   onAddApp,
@@ -59,15 +64,21 @@ export const RoleManagementView: React.FC<RoleManagementViewProps> = ({
   tickets,
   onUpdateTicketStatus,
   onSyncNow,
-  isSyncing = false
+  isSyncing = false,
+  googleClientId,
+  onSaveGoogleClientId
 }) => {
   // Login form state
   const [loginEmail, setLoginEmail] = useState('');
   const [loginPass, setLoginPass] = useState('');
   const [loginError, setLoginError] = useState<string | null>(null);
   const [isLoggingIn, setIsLoggingIn] = useState(false);
-  const [showGooglePrompt, setShowGooglePrompt] = useState(false);
-  const [googleEmailInput, setGoogleEmailInput] = useState('');
+
+  // Google OAuth setup prompt state
+  const [showGoogleConfig, setShowGoogleConfig] = useState(false);
+  const [googleClientIdInput, setGoogleClientIdInput] = useState(googleClientId || '');
+  const [showAlternateEmailInput, setShowAlternateEmailInput] = useState(false);
+  const [alternateEmail, setAlternateEmail] = useState('');
 
   // Admin view tab: 'apps' or 'tickets'
   const [adminTab, setAdminTab] = useState<'apps' | 'tickets'>('apps');
@@ -108,23 +119,62 @@ export const RoleManagementView: React.FC<RoleManagementViewProps> = ({
     }
   };
 
-  const handleGoogleLoginSubmit = async (email: string) => {
-    if (!email || !email.trim()) {
-      setLoginError('Vui lòng nhập địa chỉ Google / FPT Mail của bạn.');
+  const handleTriggerGoogleOAuth = async () => {
+    setLoginError(null);
+    if (!googleClientId) {
+      setShowGoogleConfig(true);
+      return;
+    }
+    setIsLoggingIn(true);
+    try {
+      await onLoginWithGoogleOAuth();
+    } catch (err: any) {
+      if (err.message?.includes('CLIENT_ID_MISSING')) {
+        setShowGoogleConfig(true);
+      } else {
+        setLoginError(err.message || 'Lỗi đăng nhập với tài khoản Google.');
+      }
+    } finally {
+      setIsLoggingIn(false);
+    }
+  };
+
+  const handleSaveClientIdAndLogin = async () => {
+    if (!googleClientIdInput.trim()) {
+      setLoginError('Vui lòng nhập Google Client ID.');
+      return;
+    }
+    if (onSaveGoogleClientId) {
+      onSaveGoogleClientId(googleClientIdInput.trim());
+    }
+    setIsLoggingIn(true);
+    try {
+      await onLoginWithGoogleOAuth();
+      setShowGoogleConfig(false);
+    } catch (err: any) {
+      setLoginError(err.message || 'Lỗi đăng nhập Google với Client ID.');
+    } finally {
+      setIsLoggingIn(false);
+    }
+  };
+
+  const handleAlternateGoogleLogin = async () => {
+    if (!alternateEmail.trim()) {
+      setLoginError('Vui lòng nhập email Google của Quản trị viên.');
       return;
     }
     setLoginError(null);
     setIsLoggingIn(true);
     try {
-      const success = await onLoginWithGoogle(email.trim());
-      if (!success) {
-        setLoginError(`Tài khoản Google "${email}" chưa được cấp quyền Admin trong tab PhanQuyen trên Google Sheets!`);
+      const ok = await onLoginWithGoogleEmail(alternateEmail.trim());
+      if (!ok) {
+        setLoginError(`Tài khoản Google "${alternateEmail}" không có quyền Admin trong Google Sheets!`);
       } else {
-        setShowGooglePrompt(false);
-        setGoogleEmailInput('');
+        setShowGoogleConfig(false);
+        setAlternateEmail('');
       }
     } catch (err: any) {
-      setLoginError(err.message || 'Lỗi đăng nhập Google.');
+      setLoginError(err.message || 'Lỗi xác thực email Google.');
     } finally {
       setIsLoggingIn(false);
     }
@@ -138,64 +188,68 @@ export const RoleManagementView: React.FC<RoleManagementViewProps> = ({
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
           <h2 className="text-xl sm:text-2xl font-bold text-slate-800 tracking-tight">
-            Hệ Thống Phân Quyền & Quản Trị Hệ Thống
+            Trung Tâm Phân Quyền & Quản Trị Hệ Thống
           </h2>
           <p className="text-xs sm:text-sm text-slate-500 mt-1">
-            Dữ liệu đồng bộ trực tiếp thời gian thực từ <strong>Google Sheets</strong> và lưu trữ đám mây.
+            Quyền Người dùng (xem và truy cập) & Quyền Quản trị viên (thêm, sửa, xóa tiện ích và tiếp nhận yêu cầu)
           </p>
         </div>
 
-        {onSyncNow && (
-          <button
-            type="button"
-            onClick={() => onSyncNow()}
-            disabled={isSyncing}
-            className="self-start sm:self-auto px-4 py-2 rounded-xl bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200 text-xs sm:text-sm font-semibold flex items-center gap-2 transition-all cursor-pointer shadow-2xs disabled:opacity-50"
-          >
-            <RefreshCw size={14} className={isSyncing ? 'animate-spin text-emerald-600' : 'text-emerald-600'} />
-            <span>{isSyncing ? 'Đang đồng bộ...' : 'Đồng bộ từ Google Sheets'}</span>
-          </button>
-        )}
+        {/* Current status pill */}
+        <div className="flex items-center gap-2 self-start sm:self-auto">
+          {currentRole === 'admin' ? (
+            <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-emerald-100 text-emerald-800 text-xs font-bold border border-emerald-200">
+              <ShieldCheck size={16} className="text-emerald-600" />
+              <span>Đang ở quyền: QUẢN TRỊ VIÊN (ADMIN)</span>
+            </div>
+          ) : (
+            <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-blue-100 text-blue-800 text-xs font-bold border border-blue-200">
+              <User size={16} className="text-blue-600" />
+              <span>Đang ở quyền: NGƯỜI DÙNG (CHỈ XEM)</span>
+            </div>
+          )}
+        </div>
       </div>
 
-      {/* VIEW KHI ĐANG Ở QUYỀN ADMIN */}
+      {/* VIEW DÀNH CHO ADMIN ĐÃ ĐĂNG NHẬP */}
       {currentRole === 'admin' ? (
         <div className="space-y-6">
-          {/* Admin Banner with User Info and Logout */}
-          <div className="bg-gradient-to-r from-emerald-600 to-teal-700 text-white rounded-3xl p-6 shadow-md flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+          {/* Admin Welcome Banner */}
+          <div className="bg-gradient-to-r from-emerald-600 via-teal-600 to-blue-600 text-white rounded-3xl p-6 sm:p-7 shadow-lg flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
             <div className="flex items-center gap-4">
-              <div className="w-14 h-14 rounded-2xl bg-white/20 backdrop-blur-xs flex items-center justify-center text-white shrink-0">
-                <ShieldCheck size={32} />
-              </div>
+              {currentAdminUser?.avatar ? (
+                <img
+                  src={currentAdminUser.avatar}
+                  alt={currentAdminUser.name}
+                  className="w-14 h-14 rounded-2xl border-2 border-white/50 object-cover shadow-sm shrink-0"
+                />
+              ) : (
+                <div className="w-14 h-14 rounded-2xl bg-white/20 backdrop-blur-xs flex items-center justify-center shrink-0 text-white font-black text-xl">
+                  <ShieldCheck size={32} />
+                </div>
+              )}
               <div>
-                <div className="flex items-center gap-2">
-                  <h3 className="font-bold text-lg text-white">
-                    Xin chào: {currentAdminUser?.name || 'Quản trị viên'}
+                <div className="flex items-center gap-2 flex-wrap">
+                  <h3 className="font-extrabold text-lg sm:text-xl">
+                    Xin chào, {currentAdminUser?.name || 'Quản trị viên'}!
                   </h3>
-                  <span className="bg-white/20 text-white text-[11px] font-bold px-2 py-0.5 rounded-full uppercase">
-                    Admin
+                  <span className="px-2.5 py-0.5 rounded-full bg-white/25 text-[11px] font-bold uppercase tracking-wider">
+                    Full Admin Access
                   </span>
                 </div>
-                <p className="text-xs text-emerald-100 mt-0.5">
-                  Tài khoản: {currentAdminUser?.email} • Mọi thao tác thêm/sửa/xóa tiện ích được tự động lưu vĩnh viễn và áp dụng ngay cho tất cả người dùng!
+                <p className="text-xs sm:text-sm text-emerald-100 mt-0.5">
+                  Tài khoản: <span className="font-semibold underline">{currentAdminUser?.email}</span> • Dữ liệu tự động đồng bộ trên mọi thiết bị
                 </p>
               </div>
             </div>
 
-            <div className="flex items-center gap-2.5 w-full md:w-auto justify-end">
-              <button
-                type="button"
-                onClick={onGoToHome}
-                className="px-4 py-2 rounded-xl bg-white/15 hover:bg-white/25 text-white text-xs sm:text-sm font-semibold transition-colors cursor-pointer"
-              >
-                Về Trang chủ
-              </button>
+            <div className="flex items-center gap-2.5 self-end sm:self-auto shrink-0">
               <button
                 type="button"
                 onClick={onLogoutAdmin}
-                className="px-4 py-2 rounded-xl bg-white text-emerald-800 hover:bg-emerald-50 text-xs sm:text-sm font-bold flex items-center gap-1.5 shadow-xs transition-colors cursor-pointer"
+                className="px-4 py-2 rounded-xl bg-white/15 hover:bg-white/25 text-white text-xs sm:text-sm font-semibold flex items-center gap-2 transition-colors cursor-pointer border border-white/20"
               >
-                <LogOut size={15} />
+                <LogOut size={16} />
                 <span>Đăng xuất Admin</span>
               </button>
             </div>
@@ -244,7 +298,7 @@ export const RoleManagementView: React.FC<RoleManagementViewProps> = ({
                     </h3>
                   </div>
                   <p className="text-xs text-slate-500 mt-0.5">
-                    Hệ thống tự động lưu trên đám mây và đồng bộ với Google Sheets. Không cần sao chép hay xuất file thủ công.
+                    Hệ thống tự động lưu trên đám mây và đồng bộ với Google Sheets. Mọi thiết bị khác truy cập đều nhìn thấy tức thì.
                   </p>
                 </div>
 
@@ -266,7 +320,7 @@ export const RoleManagementView: React.FC<RoleManagementViewProps> = ({
                       className="px-3.5 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs sm:text-sm font-semibold flex items-center gap-1.5 transition-colors cursor-pointer disabled:opacity-50"
                     >
                       <RefreshCw size={14} className={isSyncing ? 'animate-spin' : ''} />
-                      <span>Đồng bộ ngay</span>
+                      <span>Đồng bộ Google Sheets</span>
                     </button>
                   )}
 
@@ -316,7 +370,7 @@ export const RoleManagementView: React.FC<RoleManagementViewProps> = ({
                       <th className="py-3 px-4">Tiện ích</th>
                       <th className="py-3 px-4">Đường dẫn link (URL)</th>
                       <th className="py-3 px-4">Nhóm danh mục</th>
-                      <th className="py-3 px-4">Thẻ</th>
+                      <th className="py-3 px-4">Nguồn dữ liệu</th>
                       <th className="py-3 px-4 text-right">Thao tác</th>
                     </tr>
                   </thead>
@@ -358,9 +412,17 @@ export const RoleManagementView: React.FC<RoleManagementViewProps> = ({
                         </td>
 
                         <td className="py-3 px-4">
-                          <span className="inline-block px-2 py-0.5 rounded text-[11px] font-mono uppercase bg-blue-50 text-blue-700">
-                            {app.tag || 'webapp'}
-                          </span>
+                          {app.isCustom || app.id.startsWith('custom-') ? (
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold bg-emerald-100 text-emerald-800">
+                              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+                              Tạo trên Web
+                            </span>
+                          ) : (
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold bg-blue-100 text-blue-800">
+                              <span className="w-1.5 h-1.5 rounded-full bg-blue-500" />
+                              Google Sheets
+                            </span>
+                          )}
                         </td>
 
                         <td className="py-3 px-4 text-right">
@@ -408,91 +470,75 @@ export const RoleManagementView: React.FC<RoleManagementViewProps> = ({
                     <p className="text-xs text-slate-500">Danh sách các yêu cầu được gửi từ biểu mẫu hỗ trợ của người dùng</p>
                   </div>
                 </div>
-
-                <span className="text-xs font-bold text-slate-600 bg-slate-100 px-3 py-1.5 rounded-xl">
-                  Tổng: {tickets.length} yêu cầu
-                </span>
               </div>
 
-              {tickets.length > 0 ? (
-                <div className="divide-y divide-slate-100">
+              {tickets.length === 0 ? (
+                <div className="py-12 text-center text-slate-400">
+                  <Inbox size={40} className="mx-auto mb-2 opacity-50" />
+                  <p className="text-sm">Hiện chưa có yêu cầu hỗ trợ nào được gửi đến.</p>
+                </div>
+              ) : (
+                <div className="space-y-3">
                   {tickets.map((t) => (
-                    <div key={t.id} className="py-4 space-y-2 hover:bg-slate-50/50 p-3 rounded-2xl transition-colors">
-                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-                        <div className="flex items-center gap-2">
-                          <span
-                            className={`px-2 py-0.5 rounded-full text-[10px] font-black uppercase ${
-                              t.status === 'new'
-                                ? 'bg-rose-100 text-rose-700 border border-rose-300'
-                                : 'bg-emerald-100 text-emerald-700'
-                            }`}
-                          >
-                            {t.status === 'new' ? 'Yêu cầu mới' : 'Đã xử lý'}
-                          </span>
+                    <div
+                      key={t.id}
+                      className={`p-4 rounded-2xl border transition-all ${
+                        t.status === 'new'
+                          ? 'bg-blue-50/40 border-blue-200 shadow-2xs'
+                          : 'bg-slate-50 border-slate-200 opacity-75'
+                      }`}
+                    >
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-2">
+                        <div className="flex items-center gap-2 flex-wrap">
                           <span className="font-bold text-slate-800 text-sm">{t.name}</span>
-                          <span className="text-xs text-blue-600 font-mono">({t.emailOrCode})</span>
+                          <span className="text-xs text-slate-500 font-mono">({t.emailOrCode})</span>
+                          <span className="px-2 py-0.5 rounded-full bg-slate-200 text-slate-700 text-[11px] font-semibold">
+                            {t.category}
+                          </span>
                         </div>
-
-                        <div className="flex items-center gap-2 text-xs text-slate-400">
+                        <div className="flex items-center gap-2 text-xs text-slate-400 shrink-0">
                           <Clock size={13} />
                           <span>{t.createdAt}</span>
                         </div>
                       </div>
 
-                      <div className="bg-slate-50 p-3 rounded-xl border border-slate-100 text-xs sm:text-sm text-slate-700 space-y-1">
-                        <div className="font-semibold text-slate-800 text-xs text-blue-800">
-                          Vấn đề: {t.category}
-                        </div>
-                        <p className="whitespace-pre-wrap leading-relaxed">{t.content}</p>
-                      </div>
+                      <p className="text-xs sm:text-sm text-slate-700 mb-3 whitespace-pre-wrap leading-relaxed">
+                        {t.content}
+                      </p>
 
-                      <div className="flex items-center justify-end gap-2 pt-1">
-                        <a
-                          href={`mailto:${t.emailOrCode}?subject=${encodeURIComponent(`[Phản hồi hỗ trợ FPT Polyschool] ${t.category}`)}&body=${encodeURIComponent(`Chào bạn ${t.name},\n\nVề yêu cầu của bạn: "${t.content}"\n\nPhòng Đào tạo xin thông báo phản hồi như sau:\n\n`)}`}
-                          className="px-3 py-1.5 rounded-lg bg-blue-50 hover:bg-blue-600 text-blue-700 hover:text-white text-xs font-semibold flex items-center gap-1.5 transition-colors"
+                      <div className="flex items-center justify-between pt-2 border-t border-slate-200/60">
+                        <span
+                          className={`text-xs font-bold ${
+                            t.status === 'new' ? 'text-amber-600' : 'text-emerald-600'
+                          }`}
                         >
-                          <Mail size={13} />
-                          <span>Gửi email phản hồi</span>
-                        </a>
+                          {t.status === 'new' ? '• Chờ xử lý' : '✓ Đã xử lý'}
+                        </span>
 
-                        {t.status === 'new' ? (
-                          <button
-                            type="button"
-                            onClick={() => onUpdateTicketStatus(t.id, 'resolved')}
-                            className="px-3 py-1.5 rounded-lg bg-emerald-50 hover:bg-emerald-600 text-emerald-700 hover:text-white text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer"
-                          >
-                            <Check size={13} />
-                            <span>Đánh dấu đã xử lý</span>
-                          </button>
-                        ) : (
-                          <button
-                            type="button"
-                            onClick={() => onUpdateTicketStatus(t.id, 'new')}
-                            className="px-3 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-600 text-xs font-semibold cursor-pointer"
-                          >
-                            Đánh dấu chưa xử lý
-                          </button>
-                        )}
+                        <button
+                          type="button"
+                          onClick={() =>
+                            onUpdateTicketStatus(t.id, t.status === 'new' ? 'resolved' : 'new')
+                          }
+                          className="px-3 py-1 rounded-lg bg-white border border-slate-200 hover:bg-slate-100 text-slate-700 text-xs font-medium transition-colors cursor-pointer"
+                        >
+                          {t.status === 'new' ? 'Đánh dấu đã giải quyết' : 'Đánh dấu chờ xử lý'}
+                        </button>
                       </div>
                     </div>
                   ))}
-                </div>
-              ) : (
-                <div className="py-12 text-center text-slate-400 space-y-2">
-                  <Inbox size={40} className="mx-auto text-slate-300" />
-                  <p className="text-sm font-medium">Chưa có yêu cầu hỗ trợ nào được gửi đến.</p>
                 </div>
               )}
             </div>
           )}
         </div>
       ) : (
-        /* VIEW KHI ĐANG Ở QUYỀN NGƯỜI DÙNG: FORM ĐĂNG NHẬP ADMIN & GOOGLE SIGN-IN */
+        /* GIAO DIỆN CHỌN QUYỀN / ĐĂNG NHẬP */
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
-          {/* Cột trái: Giới thiệu quyền người dùng */}
+          {/* Cột trái: Giới thiệu Quyền Người Dùng */}
           <div className="lg:col-span-6 bg-white rounded-3xl p-7 border border-slate-200 shadow-xs space-y-4">
-            <div className="flex items-center gap-3">
-              <div className="w-12 h-12 rounded-2xl bg-blue-50 text-blue-600 flex items-center justify-center shrink-0">
+            <div className="flex items-center gap-3 pb-3 border-b border-slate-100">
+              <div className="w-12 h-12 rounded-2xl bg-blue-100 text-blue-600 flex items-center justify-center shrink-0">
                 <User size={24} />
               </div>
               <div>
@@ -548,12 +594,13 @@ export const RoleManagementView: React.FC<RoleManagementViewProps> = ({
               </div>
             )}
 
-            {/* CHỨC NĂNG 1: ĐĂNG NHẬP BẰNG TÀI KHOẢN GOOGLE */}
+            {/* CHỨC NĂNG 1: ĐĂNG NHẬP BẰNG TÀI KHOẢN GOOGLE CHÍNH CHỦ */}
             <div>
               <button
                 type="button"
-                onClick={() => setShowGooglePrompt(!showGooglePrompt)}
-                className="w-full py-2.5 px-4 rounded-xl border border-slate-200 hover:border-slate-300 hover:bg-slate-50 bg-white text-slate-700 font-semibold text-xs sm:text-sm flex items-center justify-center gap-2.5 transition-all shadow-2xs cursor-pointer"
+                disabled={isLoggingIn}
+                onClick={handleTriggerGoogleOAuth}
+                className="w-full py-2.5 px-4 rounded-xl border border-slate-200 hover:border-slate-300 hover:bg-slate-50 bg-white text-slate-700 font-semibold text-xs sm:text-sm flex items-center justify-center gap-2.5 transition-all shadow-2xs cursor-pointer disabled:opacity-60"
               >
                 <svg className="w-4 h-4 shrink-0" viewBox="0 0 24 24">
                   <path
@@ -573,34 +620,86 @@ export const RoleManagementView: React.FC<RoleManagementViewProps> = ({
                     d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z"
                   />
                 </svg>
-                <span>Đăng nhập với tài khoản Google</span>
+                <span>
+                  {isLoggingIn ? 'Đang mở xác thực Google...' : 'Đăng nhập với tài khoản Google'}
+                </span>
               </button>
 
-              {showGooglePrompt && (
-                <div className="mt-3 p-3.5 bg-blue-50/70 border border-blue-200 rounded-2xl space-y-2 animate-in fade-in">
-                  <p className="text-xs text-blue-900 font-semibold">
-                    Nhập địa chỉ Google / FPT Mail của quản trị viên:
-                  </p>
-                  <div className="flex gap-2">
-                    <input
-                      type="email"
-                      value={googleEmailInput}
-                      onChange={(e) => setGoogleEmailInput(e.target.value)}
-                      placeholder="email@fpt.edu.vn hoặc gmail..."
-                      className="flex-1 bg-white border border-blue-300 rounded-xl px-3 py-1.5 text-xs text-slate-800 focus:outline-none"
-                    />
+              {/* Card Thiết Lập Google OAuth khi chưa nhập Client ID */}
+              {showGoogleConfig && (
+                <div className="mt-3 p-4 bg-blue-50/80 border border-blue-200 rounded-2xl space-y-3 animate-in fade-in">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-1.5 text-blue-900 font-bold text-xs sm:text-sm">
+                      <Lock size={15} />
+                      <span>Xác thực Google chính thức (Có popup cho phép)</span>
+                    </div>
                     <button
                       type="button"
-                      disabled={isLoggingIn}
-                      onClick={() => handleGoogleLoginSubmit(googleEmailInput)}
-                      className="px-3.5 py-1.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs cursor-pointer disabled:opacity-50"
+                      onClick={() => setShowGoogleConfig(false)}
+                      className="text-slate-400 hover:text-slate-600 text-xs p-1"
                     >
-                      Xác nhận
+                      <X size={15} />
                     </button>
                   </div>
-                  <p className="text-[11px] text-blue-700">
-                    Hệ thống kiểm tra trực tiếp danh sách phân quyền Admin từ Google Sheets để cấp quyền tức thì.
+
+                  <p className="text-xs text-blue-800 leading-relaxed">
+                    Để kích hoạt popup của Google với màn hình cho phép (Google OAuth Consent): Hãy nhập mã <strong>Google Cloud Client ID</strong> (được cấp miễn phí):
                   </p>
+
+                  <div className="space-y-2">
+                    <input
+                      type="text"
+                      value={googleClientIdInput}
+                      onChange={(e) => setGoogleClientIdInput(e.target.value)}
+                      placeholder="ví dụ: 123456...apps.googleusercontent.com"
+                      className="w-full bg-white border border-blue-300 rounded-xl px-3 py-2 text-xs text-slate-800 focus:outline-none"
+                    />
+                    <div className="flex gap-2">
+                      <button
+                        type="button"
+                        disabled={isLoggingIn}
+                        onClick={handleSaveClientIdAndLogin}
+                        className="flex-1 py-1.5 px-3 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold transition-colors cursor-pointer"
+                      >
+                        Lưu & Mở popup Google ngay
+                      </button>
+                      <button
+                        type="button"
+                        onClick={onOpenSheetConfig}
+                        className="py-1.5 px-3 bg-white border border-blue-300 text-blue-700 hover:bg-blue-50 rounded-xl text-xs font-semibold cursor-pointer"
+                      >
+                        Cài đặt
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="pt-2 border-t border-blue-200/60">
+                    <button
+                      type="button"
+                      onClick={() => setShowAlternateEmailInput(!showAlternateEmailInput)}
+                      className="text-[11px] text-blue-700 hover:underline flex items-center gap-1 font-medium cursor-pointer"
+                    >
+                      <span>Hoặc xác thực nhanh bằng Email Quản trị viên (nếu chưa có Client ID)</span>
+                    </button>
+                    {showAlternateEmailInput && (
+                      <div className="mt-2 flex gap-2">
+                        <input
+                          type="email"
+                          value={alternateEmail}
+                          onChange={(e) => setAlternateEmail(e.target.value)}
+                          placeholder="email@fpt.edu.vn hoặc gmail..."
+                          className="flex-1 bg-white border border-blue-300 rounded-xl px-3 py-1.5 text-xs text-slate-800 focus:outline-none"
+                        />
+                        <button
+                          type="button"
+                          onClick={handleAlternateGoogleLogin}
+                          className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold cursor-pointer"
+                        >
+                          Xác nhận
+                        </button>
+                      </div>
+                    )}
+                  </div>
                 </div>
               )}
             </div>
