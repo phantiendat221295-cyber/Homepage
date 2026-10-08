@@ -11,27 +11,31 @@ import { GuideModal } from './components/GuideModal';
 import { EditAppModal } from './components/EditAppModal';
 import { RoleManagementView } from './components/RoleManagementView';
 import { Footer } from './components/Footer';
-import { WebAppItem, NotificationItem, QuickToolItem, GoogleSheetsConfig } from './types';
-import { DEFAULT_APPS, DEFAULT_NOTIFICATIONS, DEFAULT_QUICK_TOOLS } from './data/defaultData';
+import { WebAppItem, NotificationItem, QuickToolItem, GoogleSheetsConfig, AdminAccount } from './types';
+import { DEFAULT_APPS, DEFAULT_NOTIFICATIONS, DEFAULT_QUICK_TOOLS, DEFAULT_ADMINS } from './data/defaultData';
 import {
   getStoredConfig,
   saveStoredConfig,
   fetchAppsFromCsv,
-  fetchNotificationsFromCsv
+  fetchNotificationsFromCsv,
+  fetchPermissionsFromCsv
 } from './services/sheetsService';
-import { SearchX, Filter, Plus, ShieldCheck, X, Check, Edit3, ArrowRight } from 'lucide-react';
+import { SearchX, Filter, Plus, ShieldCheck, X, Check, Edit3, ShieldAlert, LogOut, FileSpreadsheet } from 'lucide-react';
 
 export default function App() {
-  // Role state: 'user' (chỉ xem & bấm link) hoặc 'admin' (toàn quyền sửa tên và link)
-  const [currentRole, setCurrentRole] = useState<'user' | 'admin'>(() => {
+  // Admin Session State
+  const [currentAdminUser, setCurrentAdminUser] = useState<AdminAccount | null>(() => {
     try {
-      const saved = localStorage.getItem('fpt_portal_role');
-      if (saved === 'admin' || saved === 'user') return saved;
+      const saved = sessionStorage.getItem('fpt_portal_admin_user');
+      if (saved) return JSON.parse(saved);
     } catch {
       // ignore
     }
-    return 'user';
+    return null;
   });
+
+  // Current Role: 'admin' nếu đã đăng nhập, ngược lại là 'user'
+  const currentRole: 'user' | 'admin' = currentAdminUser ? 'admin' : 'user';
 
   // Data state
   const [apps, setApps] = useState<WebAppItem[]>(() => {
@@ -66,6 +70,7 @@ export default function App() {
   const [sheetConfig, setSheetConfig] = useState<GoogleSheetsConfig>(getStoredConfig);
   const [isSyncing, setIsSyncing] = useState(false);
   const [lastSyncedTime, setLastSyncedTime] = useState<string | undefined>(sheetConfig.lastSynced);
+  const [syncError, setSyncError] = useState<string | null>(null);
 
   // Modals
   const [isSheetModalOpen, setIsSheetModalOpen] = useState(false);
@@ -81,26 +86,7 @@ export default function App() {
 
   const showToast = (msg: string) => {
     setToastMessage(msg);
-    setTimeout(() => setToastMessage(null), 3000);
-  };
-
-  // Switch role handler
-  const handleRoleChange = (role: 'user' | 'admin') => {
-    setCurrentRole(role);
-    try {
-      localStorage.setItem('fpt_portal_role', role);
-    } catch {
-      // ignore
-    }
-    showToast(
-      role === 'admin'
-        ? '🛡️ Đã chuyển sang quyền Quản trị viên (Admin). Bạn có thể sửa tên và link tiện ích!'
-        : '👤 Đã chuyển sang quyền Người dùng (Chỉ xem và truy cập).'
-    );
-  };
-
-  const handleToggleRole = () => {
-    handleRoleChange(currentRole === 'admin' ? 'user' : 'admin');
+    setTimeout(() => setToastMessage(null), 3500);
   };
 
   // Google Sheets Sync
@@ -110,30 +96,50 @@ export default function App() {
     }
 
     setIsSyncing(true);
+    setSyncError(null);
+    let hasError = false;
+
     try {
       if (configToUse.appsCsvUrl) {
-        const fetchedApps = await fetchAppsFromCsv(configToUse.appsCsvUrl);
-        if (fetchedApps && fetchedApps.length > 0) {
-          setApps(fetchedApps);
+        try {
+          const fetchedApps = await fetchAppsFromCsv(configToUse.appsCsvUrl);
+          if (fetchedApps && fetchedApps.length > 0) {
+            setApps(fetchedApps);
+          }
+        } catch (err: any) {
+          hasError = true;
+          const msg =
+            err.message?.includes('LINK_REQUIRES_LOGIN')
+              ? 'File Google Sheets đang bị khóa quyền riêng tư hoặc chưa chọn định dạng CSV khi xuất bản. Vui lòng mở quyền Chia sẻ "Bất kỳ ai có liên kết" và chọn định dạng CSV.'
+              : err.message || 'Không thể đọc dữ liệu Webapps từ Google Sheets.';
+          setSyncError(msg);
         }
       }
 
       if (configToUse.notificationsCsvUrl) {
-        const fetchedNotis = await fetchNotificationsFromCsv(configToUse.notificationsCsvUrl);
-        if (fetchedNotis && fetchedNotis.length > 0) {
-          setNotifications(fetchedNotis);
+        try {
+          const fetchedNotis = await fetchNotificationsFromCsv(configToUse.notificationsCsvUrl);
+          if (fetchedNotis && fetchedNotis.length > 0) {
+            setNotifications(fetchedNotis);
+          }
+        } catch (err: any) {
+          console.warn('Lỗi fetch Thông báo:', err);
         }
       }
 
-      const timeStr =
-        new Date().toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' }) +
-        ' ' +
-        new Date().toLocaleDateString('vi-VN');
-      setLastSyncedTime(timeStr);
-      const updatedConfig = { ...configToUse, lastSynced: timeStr };
-      setSheetConfig(updatedConfig);
-      saveStoredConfig(updatedConfig);
-      showToast('Đồng bộ Google Sheets thành công!');
+      if (!hasError) {
+        const timeStr =
+          new Date().toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' }) +
+          ' ' +
+          new Date().toLocaleDateString('vi-VN');
+        setLastSyncedTime(timeStr);
+        const updatedConfig = { ...configToUse, lastSynced: timeStr, syncError: undefined };
+        setSheetConfig(updatedConfig);
+        saveStoredConfig(updatedConfig);
+        showToast('Đồng bộ dữ liệu từ Google Sheets thành công!');
+      } else {
+        showToast('Đồng bộ thất bại: Vui lòng kiểm tra quyền chia sẻ Google Sheets.');
+      }
     } catch (err) {
       console.error('Lỗi khi đồng bộ Google Sheets:', err);
     } finally {
@@ -141,6 +147,7 @@ export default function App() {
     }
   };
 
+  // Sync on initial mount if URL exists
   useEffect(() => {
     if (sheetConfig.appsCsvUrl || sheetConfig.notificationsCsvUrl) {
       syncDataFromSheets(sheetConfig);
@@ -157,10 +164,11 @@ export default function App() {
   const handleResetToDefault = () => {
     setApps(DEFAULT_APPS);
     setNotifications(DEFAULT_NOTIFICATIONS);
-    const clearedConfig = { appsCsvUrl: '', notificationsCsvUrl: '', autoSync: true };
+    const clearedConfig = { appsCsvUrl: '', notificationsCsvUrl: '', permissionsCsvUrl: '', autoSync: true };
     setSheetConfig(clearedConfig);
     saveStoredConfig(clearedConfig);
     setLastSyncedTime(undefined);
+    setSyncError(null);
     try {
       localStorage.setItem('fpt_portal_cached_apps', JSON.stringify(DEFAULT_APPS));
       localStorage.setItem('fpt_portal_cached_notis', JSON.stringify(DEFAULT_NOTIFICATIONS));
@@ -171,7 +179,54 @@ export default function App() {
     setIsSheetModalOpen(false);
   };
 
-  // Admin: Save (Create or Update) App
+  // ADMIN LOGIN VIA GOOGLE SHEETS
+  const handleLoginAdmin = async (email: string, pin: string): Promise<boolean> => {
+    let accounts: AdminAccount[] = DEFAULT_ADMINS;
+
+    if (sheetConfig.permissionsCsvUrl) {
+      try {
+        const remoteAccounts = await fetchPermissionsFromCsv(sheetConfig.permissionsCsvUrl);
+        if (remoteAccounts && remoteAccounts.length > 0) {
+          accounts = [...remoteAccounts, ...DEFAULT_ADMINS];
+        }
+      } catch {
+        // fallback to default
+      }
+    }
+
+    const matched = accounts.find(
+      (acc) =>
+        acc.email.toLowerCase().trim() === email.toLowerCase().trim() &&
+        acc.passwordOrPin.trim() === pin.trim() &&
+        acc.role === 'admin'
+    );
+
+    if (matched) {
+      setCurrentAdminUser(matched);
+      try {
+        sessionStorage.setItem('fpt_portal_admin_user', JSON.stringify(matched));
+      } catch {
+        // ignore
+      }
+      showToast(`Xin chào ${matched.name}! Đã đăng nhập quyền Quản trị viên.`);
+      return true;
+    }
+
+    return false;
+  };
+
+  // ADMIN LOGOUT
+  const handleLogoutAdmin = () => {
+    setCurrentAdminUser(null);
+    try {
+      sessionStorage.removeItem('fpt_portal_admin_user');
+    } catch {
+      // ignore
+    }
+    showToast('Đã đăng xuất quyền Admin, trở về quyền Người dùng.');
+  };
+
+  // Admin: Save App
   const handleSaveApp = (updatedApp: WebAppItem) => {
     setApps((prevApps) => {
       const exists = prevApps.some((a) => a.id === updatedApp.id);
@@ -314,16 +369,18 @@ export default function App() {
         onRefreshData={() => syncDataFromSheets(sheetConfig)}
         isSyncing={isSyncing}
         currentRole={currentRole}
-        onToggleRole={handleToggleRole}
+        onToggleRole={() => setActiveTab('roles')}
       />
 
       {/* MAIN VIEW SWITCHER */}
       {activeTab === 'roles' ? (
-        /* TAB PHÂN QUYỀN: Quản lý quyền Người dùng vs Admin */
+        /* TAB PHÂN QUYỀN */
         <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 sm:py-10 flex-1 w-full">
           <RoleManagementView
             currentRole={currentRole}
-            onChangeRole={handleRoleChange}
+            currentAdminUser={currentAdminUser}
+            onLoginAdmin={handleLoginAdmin}
+            onLogoutAdmin={handleLogoutAdmin}
             apps={apps}
             onAddApp={() => {
               setEditingApp(null);
@@ -336,11 +393,41 @@ export default function App() {
             onDeleteApp={handleDeleteApp}
             onResetToDefault={handleResetToDefault}
             onGoToHome={() => setActiveTab('home')}
+            hasPermissionsSheet={Boolean(sheetConfig.permissionsCsvUrl)}
+            onOpenSheetConfig={() => setIsSheetModalOpen(true)}
           />
         </main>
       ) : (
-        /* TAB TRANG CHỦ: Hero Banner & Lưới Webapps 2 Cột */
+        /* TAB TRANG CHỦ */
         <>
+          {/* Sync Error Notice Banner */}
+          {syncError && (
+            <div className="bg-amber-500 text-white px-4 py-3 shadow-xs">
+              <div className="max-w-7xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-3 text-xs sm:text-[13px]">
+                <div className="flex items-center gap-2 font-medium">
+                  <ShieldAlert size={18} className="text-amber-100 shrink-0" />
+                  <span>
+                    <strong>Cảnh báo kết nối Google Sheets:</strong> {syncError}
+                  </span>
+                </div>
+                <div className="flex items-center gap-2 shrink-0">
+                  <button
+                    onClick={() => setIsSheetModalOpen(true)}
+                    className="bg-white text-amber-900 hover:bg-amber-50 font-bold px-3 py-1 rounded-lg transition-colors cursor-pointer text-xs"
+                  >
+                    Xem hướng dẫn sửa
+                  </button>
+                  <button
+                    onClick={() => setSyncError(null)}
+                    className="text-amber-100 hover:text-white p-1 cursor-pointer"
+                  >
+                    <X size={16} />
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
           {/* Admin Mode Banner Notification (chỉ hiện khi đang ở quyền Admin) */}
           {currentRole === 'admin' && (
             <div className="bg-emerald-600 text-white px-4 py-2.5 shadow-xs">
@@ -348,8 +435,7 @@ export default function App() {
                 <div className="flex items-center gap-2 font-medium text-center sm:text-left">
                   <ShieldCheck size={17} className="text-emerald-200 shrink-0" />
                   <span>
-                    <strong>Chế độ Quản trị viên (Admin):</strong> Bạn có toàn quyền sửa tên, sửa link truy cập tiện ích bằng biểu tượng{' '}
-                    <Edit3 size={13} className="inline mx-1 text-emerald-200" /> trên từng thẻ.
+                    <strong>Đang ở quyền Quản trị viên ({currentAdminUser?.name || 'Admin'}):</strong> Bạn có thể sửa tên và link trực tiếp bằng nút <Edit3 size={13} className="inline mx-1 text-emerald-200" /> trên từng thẻ tiện ích.
                   </span>
                 </div>
                 <div className="flex items-center gap-2 shrink-0">
@@ -364,10 +450,11 @@ export default function App() {
                     <span>+ Thêm tiện ích</span>
                   </button>
                   <button
-                    onClick={() => handleRoleChange('user')}
-                    className="bg-emerald-700 hover:bg-emerald-800 text-white px-2.5 py-1 rounded-lg font-semibold transition-colors cursor-pointer"
+                    onClick={handleLogoutAdmin}
+                    className="bg-emerald-700 hover:bg-emerald-800 text-white px-2.5 py-1 rounded-lg font-semibold transition-colors cursor-pointer flex items-center gap-1"
                   >
-                    Về quyền Người dùng
+                    <LogOut size={13} />
+                    <span>Đăng xuất</span>
                   </button>
                 </div>
               </div>
@@ -516,6 +603,7 @@ export default function App() {
         lastSynced={lastSyncedTime}
         totalApps={apps.length}
         totalNotis={notifications.length}
+        syncError={syncError || undefined}
       />
 
       <NotificationModal

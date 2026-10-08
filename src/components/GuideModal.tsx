@@ -110,6 +110,25 @@ export const GuideModal: React.FC<GuideModalProps> = ({ isOpen, onClose }) => {
                 </div>
               </div>
 
+              <div className="bg-emerald-50 p-4 rounded-2xl border border-emerald-200 space-y-2">
+                <h5 className="font-bold text-emerald-900">Cấu trúc các cột trong Tab "PhanQuyen" (Bảo mật Admin):</h5>
+                <div className="font-mono text-xs bg-white p-3 rounded-xl border border-emerald-200 overflow-x-auto text-emerald-700">
+                  Email | Mật khẩu | Họ tên | Quyền
+                </div>
+                <p className="text-xs text-emerald-800">
+                  Chỉ những tài khoản có <code>Quyền = admin</code> mới có thể đăng nhập để thêm, sửa tên, đổi link truy cập. Khách truy cập web thông thường luôn ở quyền Người dùng (chỉ xem).
+                </p>
+              </div>
+
+              <div className="bg-amber-50 p-4 rounded-2xl border border-amber-200 space-y-2">
+                <h5 className="font-bold text-amber-900">⚠️ LƯU Ý SỬA LỖI ĐỒNG BỘ (Tránh lỗi chữ lạ function n(a)):</h5>
+                <ol className="list-decimal pl-5 space-y-1 text-xs text-amber-900">
+                  <li>Mở file Google Sheets &rarr; bấm nút <strong>Chia sẻ (Share)</strong> ở góc trên bên phải.</li>
+                  <li>Mục Quyền truy cập chung: chọn <strong>Bất kỳ ai có đường liên kết (Anyone with link)</strong> &rarr; chọn <strong>Người xem</strong>.</li>
+                  <li>Nếu dùng email trường (@fe.edu.vn): khi bấm <strong>Tệp &rarr; Chia sẻ &rarr; Xuất bản lên web</strong>, phải <strong>bỏ tích</strong> ô <em>"Yêu cầu người xem đăng nhập..."</em> và chọn định dạng <strong>CSV</strong>.</li>
+                </ol>
+              </div>
+
               <div className="space-y-2">
                 <h5 className="font-bold text-slate-800">Các bước Publish to Web:</h5>
                 <ol className="list-decimal pl-5 space-y-1.5 text-xs text-slate-600">

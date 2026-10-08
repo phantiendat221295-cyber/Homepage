@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { X, ExternalLink, Check, RefreshCw, FileSpreadsheet, AlertCircle, Copy, Download } from 'lucide-react';
+import { X, ExternalLink, Check, RefreshCw, FileSpreadsheet, AlertCircle, Copy, Download, KeyRound, ShieldAlert } from 'lucide-react';
 import { GoogleSheetsConfig } from '../types';
 
 interface GoogleSheetsModalProps {
@@ -12,6 +12,7 @@ interface GoogleSheetsModalProps {
   lastSynced?: string;
   totalApps: number;
   totalNotis: number;
+  syncError?: string;
 }
 
 export const GoogleSheetsModal: React.FC<GoogleSheetsModalProps> = ({
@@ -23,11 +24,12 @@ export const GoogleSheetsModal: React.FC<GoogleSheetsModalProps> = ({
   isSyncing,
   lastSynced,
   totalApps,
-  totalNotis
+  totalNotis,
+  syncError
 }) => {
   const [appsUrl, setAppsUrl] = useState(config.appsCsvUrl || '');
   const [notisUrl, setNotisUrl] = useState(config.notificationsCsvUrl || '');
-  const [copiedIndex, setCopiedIndex] = useState<number | null>(null);
+  const [permissionsUrl, setPermissionsUrl] = useState(config.permissionsCsvUrl || '');
 
   if (!isOpen) return null;
 
@@ -36,17 +38,25 @@ export const GoogleSheetsModal: React.FC<GoogleSheetsModalProps> = ({
       ...config,
       appsCsvUrl: appsUrl.trim(),
       notificationsCsvUrl: notisUrl.trim(),
+      permissionsCsvUrl: permissionsUrl.trim(),
       autoSync: true
     });
   };
 
-  const copyToClipboard = (text: string, index: number) => {
-    navigator.clipboard.writeText(text);
-    setCopiedIndex(index);
-    setTimeout(() => setCopiedIndex(null), 2000);
+  const downloadSamplePermissionsCsv = () => {
+    const csv =
+      "Email,Mật khẩu,Họ tên,Quyền\n" +
+      "admin@fe.edu.vn,123456,Quản trị viên Đào tạo,admin\n" +
+      "daotao.dna@fpt.edu.vn,fpt@2026,Ban Đào Tạo FPT,admin";
+    const blob = new Blob(["\uFEFF" + csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'fpt_portal_phanquyen_template.csv';
+    a.click();
+    URL.revokeObjectURL(url);
   };
 
-  // Sample CSV generator for Apps
   const downloadSampleAppsCsv = () => {
     const csvContent =
       "Tên,Mô tả,Link,Nhóm,Icon,Tag,Màu sắc\n" +
@@ -74,7 +84,7 @@ export const GoogleSheetsModal: React.FC<GoogleSheetsModalProps> = ({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-xs animate-in fade-in duration-200">
-      <div className="bg-white rounded-3xl max-w-2xl w-full max-h-[90vh] flex flex-col shadow-2xl border border-slate-100 overflow-hidden">
+      <div className="bg-white rounded-3xl max-w-2xl w-full max-h-[92vh] flex flex-col shadow-2xl border border-slate-100 overflow-hidden">
         {/* Header */}
         <div className="p-5 sm:p-6 border-b border-slate-100 flex items-center justify-between bg-slate-50/50">
           <div className="flex items-center gap-3">
@@ -83,7 +93,7 @@ export const GoogleSheetsModal: React.FC<GoogleSheetsModalProps> = ({
             </div>
             <div>
               <h3 className="font-bold text-slate-800 text-lg">Cài đặt kết nối Google Sheets</h3>
-              <p className="text-xs text-slate-500">Đồng bộ dữ liệu thời gian thực từ Google Sheets qua Publish to Web</p>
+              <p className="text-xs text-slate-500">Đồng bộ tự động danh sách Webapp, Thông báo & Phân quyền Admin</p>
             </div>
           </div>
           <button
@@ -95,7 +105,28 @@ export const GoogleSheetsModal: React.FC<GoogleSheetsModalProps> = ({
         </div>
 
         {/* Body */}
-        <div className="p-5 sm:p-6 overflow-y-auto space-y-6">
+        <div className="p-5 sm:p-6 overflow-y-auto space-y-5">
+          {/* Error Banner if sync failed */}
+          {syncError && (
+            <div className="bg-rose-50 border-2 border-rose-200 rounded-2xl p-4 text-xs sm:text-sm text-rose-800 space-y-2">
+              <div className="font-bold flex items-center gap-2 text-rose-900">
+                <ShieldAlert size={18} className="text-rose-600 shrink-0" />
+                <span>Phát hiện lỗi đồng bộ Google Sheets!</span>
+              </div>
+              <p className="leading-relaxed">
+                {syncError}
+              </p>
+              <div className="bg-white p-3 rounded-xl border border-rose-200 text-xs text-slate-700 space-y-1">
+                <strong>Cách sửa nhanh:</strong>
+                <ol className="list-decimal pl-4 space-y-1">
+                  <li>Mở file Google Sheets &rarr; bấm nút <strong>Chia sẻ (Share)</strong> ở góc trên bên phải.</li>
+                  <li>Đổi mục "Quyền truy cập chung" thành: <strong>Bất kỳ ai có đường liên kết (Anyone with link)</strong> &rarr; chọn <strong>Người xem</strong>.</li>
+                  <li>Vào <strong>Tệp &rarr; Chia sẻ &rarr; Xuất bản lên web</strong> &rarr; Chọn định dạng <strong>CSV</strong> (bỏ chọn ô "Yêu cầu đăng nhập miền" nếu có).</li>
+                </ol>
+              </div>
+            </div>
+          )}
+
           {/* Status card */}
           <div className="bg-emerald-50/70 border border-emerald-200/80 rounded-2xl p-4 flex items-center justify-between">
             <div className="flex items-center gap-3">
@@ -119,67 +150,73 @@ export const GoogleSheetsModal: React.FC<GoogleSheetsModalProps> = ({
           </div>
 
           {/* Input 1: Apps CSV URL */}
-          <div className="space-y-2">
+          <div className="space-y-1.5">
             <label className="block text-xs sm:text-sm font-bold text-slate-700">
-              1. Link CSV Trang tính Webapps (Tab 'Apps')
+              1. Link CSV Webapps (Tab 'Apps' hoặc tab đầu tiên) <span className="text-rose-500">*</span>
             </label>
             <input
               type="url"
               value={appsUrl}
               onChange={(e) => setAppsUrl(e.target.value)}
-              placeholder="https://docs.google.com/spreadsheets/d/e/.../pub?gid=0&single=true&output=csv"
+              placeholder="https://docs.google.com/spreadsheets/d/e/.../pub?output=csv (hoặc link edit)"
               className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5 text-xs sm:text-sm text-slate-800 placeholder-slate-400 focus:bg-white focus:border-blue-500 focus:outline-none"
             />
-            <p className="text-[11px] text-slate-500 leading-relaxed">
-              Các cột bắt buộc: <span className="font-semibold text-slate-700">Tên, Mô tả, Link, Nhóm, Icon, Tag, Màu sắc</span>
+            <p className="text-[11px] text-slate-500">
+              Các cột: <span className="font-semibold text-slate-700">Tên, Mô tả, Link, Nhóm, Icon, Tag, Màu sắc</span>
             </p>
           </div>
 
           {/* Input 2: Notifications CSV URL */}
-          <div className="space-y-2">
+          <div className="space-y-1.5">
             <label className="block text-xs sm:text-sm font-bold text-slate-700">
-              2. Link CSV Trang tính Thông báo (Tab 'ThongBao' - Tùy chọn)
+              2. Link CSV Thông báo (Tab 'ThongBao' - Tùy chọn)
             </label>
             <input
               type="url"
               value={notisUrl}
               onChange={(e) => setNotisUrl(e.target.value)}
-              placeholder="https://docs.google.com/spreadsheets/d/e/.../pub?gid=...&single=true&output=csv"
+              placeholder="https://docs.google.com/spreadsheets/d/e/.../pub?gid=...&output=csv"
               className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5 text-xs sm:text-sm text-slate-800 placeholder-slate-400 focus:bg-white focus:border-blue-500 focus:outline-none"
             />
-            <p className="text-[11px] text-slate-500 leading-relaxed">
+            <p className="text-[11px] text-slate-500">
               Các cột: <span className="font-semibold text-slate-700">Tiêu đề, Ngày, Nội dung, Link, Màu</span>
             </p>
           </div>
 
-          {/* Step-by-step Quick Guide */}
-          <div className="border border-slate-200 rounded-2xl p-4 bg-slate-50/60">
-            <h4 className="font-bold text-xs sm:text-sm text-slate-800 mb-2 flex items-center gap-1.5">
-              <AlertCircle size={16} className="text-blue-600" />
-              Cách lấy link CSV từ Google Sheets (3 bước siêu nhanh):
-            </h4>
-            <ol className="text-xs text-slate-600 space-y-1.5 list-decimal list-inside pl-1">
-              <li>Mở file Google Sheets của bạn.</li>
-              <li>
-                Chọn menu <strong className="text-slate-800">Tệp (File)</strong> &rarr;{' '}
-                <strong className="text-slate-800">Chia sẻ (Share)</strong> &rarr;{' '}
-                <strong className="text-slate-800">Xuất bản lên web (Publish to web)</strong>.
-              </li>
-              <li>
-                Ở mục Định dạng, chọn <strong className="text-slate-800">Giá trị được phân tách bằng dấu phẩy (.csv)</strong> và nhấn <strong className="text-blue-600">Xuất bản (Publish)</strong>.
-              </li>
-              <li>Sao chép link nhận được và dán vào ô bên trên.</li>
-            </ol>
+          {/* Input 3: Permissions CSV URL (Phân quyền Admin) */}
+          <div className="space-y-1.5">
+            <label className="block text-xs sm:text-sm font-bold text-slate-700 flex items-center gap-1.5">
+              <KeyRound size={14} className="text-blue-600" />
+              <span>3. Link CSV Phân quyền Admin (Tab 'PhanQuyen' - Tùy chọn)</span>
+            </label>
+            <input
+              type="url"
+              value={permissionsUrl}
+              onChange={(e) => setPermissionsUrl(e.target.value)}
+              placeholder="https://docs.google.com/spreadsheets/d/e/.../pub?gid=...&output=csv"
+              className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5 text-xs sm:text-sm text-slate-800 placeholder-slate-400 focus:bg-white focus:border-blue-500 focus:outline-none"
+            />
+            <p className="text-[11px] text-slate-500">
+              Các cột: <span className="font-semibold text-slate-700">Email, Mật khẩu, Họ tên, Quyền</span> (Chỉ tài khoản ghi ở đây mới đăng nhập được Admin)
+            </p>
+          </div>
 
-            <div className="mt-3 pt-3 border-t border-slate-200 flex flex-wrap gap-2">
-              <button
-                onClick={downloadSampleAppsCsv}
-                className="text-xs bg-white text-slate-700 hover:text-blue-600 border border-slate-200 px-3 py-1.5 rounded-lg font-medium flex items-center gap-1.5 cursor-pointer"
-              >
-                <Download size={13} />
-                <span>Tải file CSV mẫu (Apps Template)</span>
-              </button>
-            </div>
+          {/* Actions download template */}
+          <div className="pt-2 flex flex-wrap gap-2">
+            <button
+              onClick={downloadSampleAppsCsv}
+              className="text-xs bg-slate-100 hover:bg-slate-200 text-slate-700 px-3 py-1.5 rounded-lg font-medium flex items-center gap-1.5 cursor-pointer"
+            >
+              <Download size={13} />
+              <span>Tải file CSV mẫu (Apps)</span>
+            </button>
+            <button
+              onClick={downloadSamplePermissionsCsv}
+              className="text-xs bg-blue-50 hover:bg-blue-100 text-blue-700 px-3 py-1.5 rounded-lg font-medium flex items-center gap-1.5 cursor-pointer"
+            >
+              <Download size={13} />
+              <span>Tải file CSV mẫu (Phân quyền Admin)</span>
+            </button>
           </div>
         </div>
 

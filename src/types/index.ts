@@ -29,9 +29,18 @@ export interface QuickToolItem {
   badge?: string;
 }
 
+export interface AdminAccount {
+  email: string;
+  passwordOrPin: string;
+  name: string;
+  role: 'admin' | 'user';
+}
+
 export interface GoogleSheetsConfig {
   appsCsvUrl: string;
   notificationsCsvUrl: string;
+  permissionsCsvUrl?: string; // Link CSV tab 'PhanQuyen'
   lastSynced?: string;
   autoSync: boolean;
+  syncError?: string;
 }
