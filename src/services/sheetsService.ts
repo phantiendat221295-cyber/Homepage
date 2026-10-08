@@ -11,8 +11,8 @@ const STORAGE_KEYS = {
   LAST_SYNC: 'fpt_portal_last_sync'
 };
 
-// Cloud Shared API endpoint (đồng bộ giữa các thiết bị và máy tính truy cập Vercel)
-const CLOUD_CONFIG_URL = 'https://api.restful-api.dev/objects/ff808181a09d98f701a11a16e7991d14';
+// Cloud Shared API endpoint (đồng bộ siêu tốc giữa các thiết bị và máy tính truy cập Vercel)
+const CLOUD_CONFIG_URL = 'https://api.restful-api.dev/objects/ff808181a09d98f701a11aaf889b1edf';
 
 // 3 đường link Google Sheets chính thức của FPT Poly School Đào Tạo
 export const DEFAULT_SHEET_CONFIG: GoogleSheetsConfig = {
@@ -88,15 +88,30 @@ export const saveCloudData = async (data: {
   tickets?: SupportTicket[];
 }): Promise<void> => {
   try {
+    // 1. Lưu local cache ngay lập tức để phản hồi nhanh
+    if (data.customApps) {
+      try {
+        localStorage.setItem('fpt_portal_cloud_custom_apps', JSON.stringify(data.customApps));
+      } catch {}
+    }
+    if (data.deletedAppIds) {
+      try {
+        localStorage.setItem('fpt_portal_deleted_app_ids', JSON.stringify(data.deletedAppIds));
+      } catch {}
+    }
+
     let currentData: any = {};
     try {
-      const r = await fetch(CLOUD_CONFIG_URL);
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 3500);
+      const r = await fetch(CLOUD_CONFIG_URL, { signal: controller.signal });
+      clearTimeout(timeoutId);
       if (r.ok) {
         const j = await r.json();
         currentData = j.data || {};
       }
     } catch {
-      // ignore
+      // ignore timeout
     }
 
     const mergedData = {
@@ -110,20 +125,24 @@ export const saveCloudData = async (data: {
             googleClientId: data.config.googleClientId
           }
         : {}),
-      ...(data.customApps ? { customApps: data.customApps } : {}),
-      ...(data.deletedAppIds ? { deletedAppIds: data.deletedAppIds } : {}),
-      ...(data.tickets ? { tickets: data.tickets } : {}),
+      customApps: data.customApps !== undefined ? data.customApps : (currentData.customApps || []),
+      deletedAppIds: data.deletedAppIds !== undefined ? data.deletedAppIds : (currentData.deletedAppIds || []),
+      tickets: data.tickets !== undefined ? data.tickets : (currentData.tickets || []),
       updatedAt: new Date().toISOString()
     };
 
+    const putController = new AbortController();
+    const putTimeoutId = setTimeout(() => putController.abort(), 4000);
     await fetch(CLOUD_CONFIG_URL, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         name: 'fpt_portal_sheet_config',
         data: mergedData
-      })
+      }),
+      signal: putController.signal
     });
+    clearTimeout(putTimeoutId);
   } catch (err) {
     console.warn('Lỗi khi lưu Cloud Data:', err);
   }
@@ -137,12 +156,19 @@ export const fetchCloudData = async (): Promise<{
   tickets?: SupportTicket[];
 } | null> => {
   try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 3500);
     const res = await fetch(`${CLOUD_CONFIG_URL}?_t=${Date.now()}`, {
-      headers: { 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache' }
+      headers: { 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache' },
+      signal: controller.signal
     });
-    if (!res.ok) return null;
+    clearTimeout(timeoutId);
+
+    if (!res.ok) {
+      return getLocalFallbackCloudData();
+    }
     const json = await res.json();
-    if (!json || !json.data) return null;
+    if (!json || !json.data) return getLocalFallbackCloudData();
 
     const d = json.data;
     const config: GoogleSheetsConfig = {
@@ -154,14 +180,42 @@ export const fetchCloudData = async (): Promise<{
       autoSync: true
     };
 
+    const customApps = Array.isArray(d.customApps) ? d.customApps : undefined;
+    const deletedAppIds = Array.isArray(d.deletedAppIds) ? d.deletedAppIds : undefined;
+
+    if (customApps) {
+      try {
+        localStorage.setItem('fpt_portal_cloud_custom_apps', JSON.stringify(customApps));
+      } catch {}
+    }
+    if (deletedAppIds) {
+      try {
+        localStorage.setItem('fpt_portal_deleted_app_ids', JSON.stringify(deletedAppIds));
+      } catch {}
+    }
+
     return {
       config,
-      customApps: Array.isArray(d.customApps) ? d.customApps : undefined,
-      deletedAppIds: Array.isArray(d.deletedAppIds) ? d.deletedAppIds : undefined,
+      customApps,
+      deletedAppIds,
       tickets: Array.isArray(d.tickets) ? d.tickets : undefined
     };
   } catch (err) {
-    console.warn('Lỗi fetch Cloud Data:', err);
+    console.warn('Lỗi fetch Cloud Data, dùng fallback local:', err);
+    return getLocalFallbackCloudData();
+  }
+};
+
+const getLocalFallbackCloudData = () => {
+  try {
+    const localAppsRaw = localStorage.getItem('fpt_portal_cloud_custom_apps');
+    const localDeletedRaw = localStorage.getItem('fpt_portal_deleted_app_ids');
+    return {
+      config: DEFAULT_SHEET_CONFIG,
+      customApps: localAppsRaw ? JSON.parse(localAppsRaw) : undefined,
+      deletedAppIds: localDeletedRaw ? JSON.parse(localDeletedRaw) : undefined
+    };
+  } catch {
     return null;
   }
 };
