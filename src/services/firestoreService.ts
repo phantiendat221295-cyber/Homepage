@@ -31,6 +31,11 @@ export interface FirestoreErrorInfo {
     email?: string | null;
     emailVerified?: boolean | null;
     isAnonymous?: boolean | null;
+    tenantId?: string | null;
+    providerInfo?: {
+      providerId?: string | null;
+      email?: string | null;
+    }[];
   };
 }
 
@@ -47,7 +52,12 @@ export function handleFirestoreError(error: unknown, operationType: OperationTyp
       userId: auth.currentUser?.uid || null,
       email: auth.currentUser?.email || null,
       emailVerified: auth.currentUser?.emailVerified || null,
-      isAnonymous: auth.currentUser?.isAnonymous || null
+      isAnonymous: auth.currentUser?.isAnonymous || null,
+      tenantId: auth.currentUser?.tenantId || null,
+      providerInfo: auth.currentUser?.providerData?.map((provider) => ({
+        providerId: provider.providerId,
+        email: provider.email
+      })) || []
     },
     operationType,
     path
@@ -195,9 +205,12 @@ export async function seedInitialAppsIfEmpty(defaultApps: WebAppItem[]): Promise
 export const TICKETS_COLLECTION = 'support_tickets';
 
 /**
- * Lấy danh sách yêu cầu hỗ trợ từ Firestore
+ * Lấy danh sách yêu cầu hỗ trợ từ Firestore (Chỉ dành cho Admin đã đăng nhập)
  */
 export async function getTicketsFromFirestore(): Promise<SupportTicket[]> {
+  if (!auth.currentUser) {
+    return [];
+  }
   try {
     const ticketsRef = collection(db, TICKETS_COLLECTION);
     const snapshot = await getDocs(ticketsRef);
@@ -213,12 +226,15 @@ export async function getTicketsFromFirestore(): Promise<SupportTicket[]> {
 }
 
 /**
- * Lắng nghe yêu cầu hỗ trợ theo thời gian thực
+ * Lắng nghe yêu cầu hỗ trợ theo thời gian thực (Chỉ dành cho Admin đã đăng nhập)
  */
 export function subscribeTickets(
   onUpdate: (tickets: SupportTicket[]) => void,
   onError?: (err: any) => void
 ): () => void {
+  if (!auth.currentUser) {
+    return () => {};
+  }
   const ticketsRef = collection(db, TICKETS_COLLECTION);
   return onSnapshot(
     ticketsRef,
@@ -493,6 +509,22 @@ export function checkIsAdmin(email: string, activeAdmins: AdminAccount[]): boole
 export async function getAdminUsersFromFirestore(): Promise<AdminAccount[]> {
   const accountsMap = new Map<string, AdminAccount>();
 
+  // Nếu chưa đăng nhập Firebase Auth, không thực hiện list query để tránh lỗi thiếu quyền
+  if (!auth.currentUser) {
+    SYSTEM_SUPER_ADMINS.forEach((email) => {
+      accountsMap.set(email, {
+        email,
+        name: email === 'datpt60@fpt.edu.vn' ? 'Phan Tiến Đạt (Đào tạo)' : 'Phan Tiến Đạt',
+        role: 'admin',
+        status: 'active',
+        isSuperAdmin: true,
+        addedAt: '2025-01-01',
+        addedBy: 'Hệ thống'
+      });
+    });
+    return Array.from(accountsMap.values());
+  }
+
   try {
     const colRef = collection(db, ADMINS_COLLECTION);
     const snap = await getDocs(colRef);
@@ -581,6 +613,10 @@ export function subscribeAdminUsers(
   onUpdate: (admins: AdminAccount[]) => void,
   onError?: (err: any) => void
 ): () => void {
+  // Nếu chưa đăng nhập, không mở realtime listener tới admin_users
+  if (!auth.currentUser) {
+    return () => {};
+  }
   const colRef = collection(db, ADMINS_COLLECTION);
 
   return onSnapshot(

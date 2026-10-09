@@ -303,12 +303,12 @@ export default function App() {
     document.title = 'Trang chủ - FPL & FPS DNA';
   }, []);
 
-  // Tự động nạp dữ liệu từ Firestore và lắng nghe thời gian thực khi load trang
+  // 1. Tự động nạp dữ liệu công khai từ Firestore (Webapps, Cấu hình) và theo dõi phiên đăng nhập
   useEffect(() => {
-    // 1. Kiểm tra kết nối Firestore
+    // Kiểm tra kết nối Firestore
     testFirestoreConnection();
 
-    // 2. Lắng nghe WebApps theo thời gian thực từ Firestore (Realtime onSnapshot)
+    // Lắng nghe WebApps theo thời gian thực từ Firestore (Công khai cho mọi người)
     const unsubscribeApps = subscribeApps(async (firestoreApps) => {
       if (firestoreApps && firestoreApps.length > 0) {
         setApps(firestoreApps);
@@ -318,7 +318,6 @@ export default function App() {
           // ignore
         }
       } else {
-        // Nếu lần đầu Firestore còn trống, tự động nạp danh sách tiện ích ban đầu lên Firestore
         const seeded = await seedInitialAppsIfEmpty(DEFAULT_APPS);
         setApps(seeded);
       }
@@ -326,65 +325,10 @@ export default function App() {
       console.warn('Lỗi lắng nghe Firestore apps:', err);
     });
 
-    // 3. Lắng nghe Hộp thư yêu cầu hỗ trợ theo thời gian thực từ Firestore
-    const unsubscribeTickets = subscribeTickets((firestoreTickets) => {
-      if (firestoreTickets) {
-        setTickets(firestoreTickets);
-        try {
-          localStorage.setItem('fpt_portal_cached_tickets', JSON.stringify(firestoreTickets));
-        } catch {
-          // ignore
-        }
-      }
-    }, (err) => {
-      console.warn('Lỗi lắng nghe Firestore tickets:', err);
-    });
-
-    // 4. Lấy cấu hình hệ thống đã lưu trên Firestore (nếu có)
+    // Lấy cấu hình hệ thống đã lưu trên Firestore (Công khai)
     getPortalConfigFromFirestore().then((cloudConfig) => {
       if (cloudConfig && (cloudConfig.appsCsvUrl || cloudConfig.notificationsCsvUrl)) {
         setSheetConfig((prev) => ({ ...prev, ...cloudConfig }));
-      }
-    }).catch(() => null);
-
-    // 5. Lắng nghe danh sách Quản trị viên theo thời gian thực từ Cloud Firestore (Realtime onSnapshot)
-    const unsubscribeAdmins = subscribeAdminUsers((latestAdmins) => {
-      if (Array.isArray(latestAdmins)) {
-        setAdminUsers(latestAdmins);
-        try {
-          localStorage.setItem('fpt_portal_admin_users', JSON.stringify(latestAdmins));
-        } catch {}
-
-        // KIỂM TRA TỨC THÌ (REALTIME EVICTION):
-        // Nếu người dùng hiện tại đang trong phiên Admin nhưng đã bị thu hồi quyền hoặc status === 'revoked' trên Firestore, lập tức tước quyền ngay!
-        const activeUser = currentAdminUserRef.current;
-        if (activeUser && activeUser.email) {
-          const userEmail = activeUser.email.toLowerCase().trim();
-          const isSuper = SYSTEM_SUPER_ADMINS.includes(userEmail);
-          const foundAcc = latestAdmins.find(
-            (a) => a.email.toLowerCase().trim() === userEmail
-          );
-          const isAuthorized =
-            isSuper || (foundAcc != null && foundAcc.role === 'admin' && foundAcc.status === 'active');
-
-          if (!isAuthorized) {
-            console.warn(`[SECURITY] Tài khoản ${userEmail} vừa bị Super Admin thu hồi quyền hoặc không còn active!`);
-            revokeAdminSession(
-              `Tài khoản "${userEmail}" đã bị thu hồi quyền Quản trị viên bởi Super Admin.`,
-              false
-            );
-          }
-        }
-      }
-    });
-
-    // Tự động nạp danh sách admin từ Firestore
-    getAdminUsersFromFirestore().then((cloudAdmins) => {
-      if (cloudAdmins && cloudAdmins.length > 0) {
-        setAdminUsers(cloudAdmins);
-        try {
-          localStorage.setItem('fpt_portal_admin_users', JSON.stringify(cloudAdmins));
-        } catch {}
       }
     }).catch(() => null);
 
@@ -412,40 +356,81 @@ export default function App() {
             );
           }
         }
+      } else {
+        // Nếu đăng xuất khỏi Firebase Auth và phiên hiện tại không phải Super Admin
+        const currentUser = currentAdminUserRef.current;
+        if (currentUser && !SYSTEM_SUPER_ADMINS.includes(currentUser.email.toLowerCase().trim())) {
+          revokeAdminSession('Phiên đăng nhập quản trị đã kết thúc.', false);
+        }
       }
     });
 
-    // Kiểm tra tính hợp lệ của tài khoản đã lưu trong sessionStorage từ máy chủ Cloud Firestore
-    const savedUserRaw = sessionStorage.getItem('fpt_portal_admin_user');
-    if (savedUserRaw) {
-      try {
-        const savedUser = JSON.parse(savedUserRaw);
-        if (savedUser && savedUser.email) {
-          const userEmail = savedUser.email.toLowerCase().trim();
-          if (SYSTEM_SUPER_ADMINS.includes(userEmail)) {
-            // Super Admin luôn hợp lệ
-          } else {
-            getAdminUsersFromFirestore().then((serverAdmins) => {
-              const foundAcc = serverAdmins.find(
-                (a) => a.email.toLowerCase().trim() === userEmail
-              );
-              const isAuthorized =
-                foundAcc != null && foundAcc.role === 'admin' && foundAcc.status === 'active';
-              if (!isAuthorized) {
-                revokeAdminSession(
-                  `Tài khoản "${savedUser.email}" đã bị thu hồi quyền Admin bởi Super Admin.`,
-                  false
-                );
-              }
-            });
-          }
-        }
-      } catch {
-        revokeAdminSession('Phiên đăng nhập không hợp lệ.', false);
-      }
+    return () => {
+      unsubscribeApps();
+      unsubscribeAuth();
+    };
+  }, []);
+
+  // 2. Lắng nghe tài nguyên chỉ dành riêng cho Admin (Hộp thư, Danh sách phân quyền, Kiểm tra thu hồi thời gian thực)
+  // CHỈ KÍCH HOẠT KHI ĐÃ XÁC THỰC VÀ ĐANG Ở QUYỀN ADMIN
+  useEffect(() => {
+    if (currentRole !== 'admin' || !auth.currentUser) {
+      return;
     }
 
-    // 6. KIỂM TRA ĐỊNH KỲ CỨ SAU MỖI 5 GIÂY TRỰC TIẾP TỪ SERVER FIRESTORE
+    // Lắng nghe Hộp thư yêu cầu hỗ trợ (Admin only)
+    const unsubscribeTickets = subscribeTickets((firestoreTickets) => {
+      if (firestoreTickets) {
+        setTickets(firestoreTickets);
+        try {
+          localStorage.setItem('fpt_portal_cached_tickets', JSON.stringify(firestoreTickets));
+        } catch {
+          // ignore
+        }
+      }
+    });
+
+    // Lắng nghe danh sách Quản trị viên theo thời gian thực (Admin only)
+    const unsubscribeAdmins = subscribeAdminUsers((latestAdmins) => {
+      if (Array.isArray(latestAdmins)) {
+        setAdminUsers(latestAdmins);
+        try {
+          localStorage.setItem('fpt_portal_admin_users', JSON.stringify(latestAdmins));
+        } catch {}
+
+        // KIỂM TRA TỨC THÌ (REALTIME EVICTION):
+        const activeUser = currentAdminUserRef.current;
+        if (activeUser && activeUser.email) {
+          const userEmail = activeUser.email.toLowerCase().trim();
+          const isSuper = SYSTEM_SUPER_ADMINS.includes(userEmail);
+          const foundAcc = latestAdmins.find(
+            (a) => a.email.toLowerCase().trim() === userEmail
+          );
+          const isAuthorized =
+            isSuper || (foundAcc != null && foundAcc.role === 'admin' && foundAcc.status === 'active');
+
+          if (!isAuthorized) {
+            console.warn(`[SECURITY] Tài khoản ${userEmail} vừa bị Super Admin thu hồi quyền hoặc không còn active!`);
+            revokeAdminSession(
+              `Tài khoản "${userEmail}" đã bị thu hồi quyền Quản trị viên bởi Super Admin.`,
+              false
+            );
+          }
+        }
+      }
+    });
+
+    // Tự động nạp danh sách admin cho màn hình phân quyền
+    getAdminUsersFromFirestore().then((cloudAdmins) => {
+      if (cloudAdmins && cloudAdmins.length > 0) {
+        setAdminUsers(cloudAdmins);
+        try {
+          localStorage.setItem('fpt_portal_admin_users', JSON.stringify(cloudAdmins));
+        } catch {}
+      }
+    }).catch(() => null);
+
+    // Kiểm tra định kỳ mỗi 5 giây trực tiếp từ máy chủ Firestore
     const adminCheckInterval = setInterval(async () => {
       const activeUser = currentAdminUserRef.current;
       if (activeUser && activeUser.email) {
@@ -465,13 +450,11 @@ export default function App() {
     }, 5000);
 
     return () => {
-      unsubscribeApps();
       unsubscribeTickets();
       unsubscribeAdmins();
-      unsubscribeAuth();
       clearInterval(adminCheckInterval);
     };
-  }, []);
+  }, [currentRole]);
 
   const handleSaveSheetConfig = async (newConfig: GoogleSheetsConfig) => {
     setSheetConfig(newConfig);
