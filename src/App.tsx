@@ -349,7 +349,6 @@ export default function App() {
       cleanEmail === 'loiqt60@fpt.edu.vn' ||
       cleanEmail === 'duocdt260@fpt.edu.vn' ||
       cleanEmail === 'thainh44@fpt.edu.vn' ||
-      cleanEmail === 'dienvnn@fpt.edu.vn' ||
       cleanEmail === 'phantiendat221295@gmail.com';
 
     if (matched || isOwner) {
@@ -395,7 +394,6 @@ export default function App() {
       cleanInput === 'loiqt@fpt.edu.vn' ||
       cleanInput === 'duocdty2@fpt.edu.vn' ||
       cleanInput === 'thainh44@fpt.edu.vn' ||
-      cleanInput === 'dienvnn@fpt.edu.vn' ||
       cleanInput === 'phantiendat221295@gmail.com';
 
     if (matchedFromSheet || isOwner) {
