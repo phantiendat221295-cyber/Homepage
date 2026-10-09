@@ -22,9 +22,11 @@ import {
   UserCheck,
   UserX,
   ShieldAlert,
+  RotateCcw,
   X
 } from 'lucide-react';
 import { DynamicIcon } from './DynamicIcon';
+import { DEFAULT_GOOGLE_CLIENT_ID } from '../services/googleAuthService';
 
 interface RoleManagementViewProps {
   currentRole: 'user' | 'admin';
@@ -47,6 +49,7 @@ interface RoleManagementViewProps {
   adminUsers?: AdminAccount[];
   onAddAdminUser?: (email: string, name?: string) => Promise<void>;
   onRemoveAdminUser?: (email: string) => Promise<void>;
+  onResetDefaultAdmins?: () => Promise<void>;
   onSyncNow?: () => Promise<void> | void;
   isSyncing?: boolean;
   googleClientId?: string;
@@ -74,6 +77,7 @@ export const RoleManagementView: React.FC<RoleManagementViewProps> = ({
   adminUsers = [],
   onAddAdminUser,
   onRemoveAdminUser,
+  onResetDefaultAdmins,
   onSyncNow,
   isSyncing = false,
   googleClientId,
@@ -87,7 +91,7 @@ export const RoleManagementView: React.FC<RoleManagementViewProps> = ({
 
   // Google OAuth setup prompt state
   const [showGoogleConfig, setShowGoogleConfig] = useState(false);
-  const [googleClientIdInput, setGoogleClientIdInput] = useState(googleClientId || '');
+  const [googleClientIdInput, setGoogleClientIdInput] = useState(googleClientId || DEFAULT_GOOGLE_CLIENT_ID);
   const [showAlternateEmailInput, setShowAlternateEmailInput] = useState(false);
   const [alternateEmail, setAlternateEmail] = useState('');
 
@@ -139,10 +143,6 @@ export const RoleManagementView: React.FC<RoleManagementViewProps> = ({
 
   const handleTriggerGoogleOAuth = async () => {
     setLoginError(null);
-    if (!googleClientId) {
-      setShowGoogleConfig(true);
-      return;
-    }
     setIsLoggingIn(true);
     try {
       await onLoginWithGoogleOAuth();
@@ -154,6 +154,24 @@ export const RoleManagementView: React.FC<RoleManagementViewProps> = ({
       }
     } finally {
       setIsLoggingIn(false);
+    }
+  };
+
+  const handleResetDefaults = async () => {
+    if (!onResetDefaultAdmins) return;
+    if (
+      window.confirm(
+        'Khôi phục 2 Quản trị viên ban đầu (datpt60@fpt.edu.vn và phantiendat221295@gmail.com) lên Firestore?'
+      )
+    ) {
+      setAdminActionError(null);
+      setAdminActionSuccess(null);
+      try {
+        await onResetDefaultAdmins();
+        setAdminActionSuccess('Đã khôi phục 2 Quản trị viên mặc định lên Firestore Cloud!');
+      } catch (err: any) {
+        setAdminActionError(err.message || 'Lỗi khôi phục Admin');
+      }
     }
   };
 
@@ -706,14 +724,58 @@ export const RoleManagementView: React.FC<RoleManagementViewProps> = ({
 
               {/* Danh Sách Quản Trị Viên Hiện Tại */}
               <div className="space-y-3">
-                <div className="flex items-center justify-between">
-                  <h4 className="text-xs sm:text-sm font-bold text-slate-800">
-                    Danh sách Quản trị viên hiện hành ({adminUsers.length} tài khoản)
-                  </h4>
-                  <span className="text-[11px] text-slate-500">
-                    Cập nhật tự động lên Cloud Firestore
-                  </span>
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                  <div>
+                    <h4 className="text-xs sm:text-sm font-bold text-slate-800">
+                      Danh sách Quản trị viên hiện hành ({adminUsers.length} tài khoản)
+                    </h4>
+                    <span className="text-[11px] text-slate-500">
+                      Lưu và đồng bộ tự động theo thời gian thực trên Cloud Firestore
+                    </span>
+                  </div>
+
+                  <div className="flex items-center gap-2 flex-wrap">
+                    {onResetDefaultAdmins && (
+                      <button
+                        type="button"
+                        onClick={handleResetDefaults}
+                        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-indigo-50 hover:bg-indigo-100 text-indigo-700 text-xs font-bold border border-indigo-200 transition-colors cursor-pointer"
+                        title="Khôi phục lại datpt60@fpt.edu.vn và phantiendat221295@gmail.com"
+                      >
+                        <RotateCcw size={13} />
+                        <span>Khôi phục 2 Admin ban đầu</span>
+                      </button>
+                    )}
+                  </div>
                 </div>
+
+                {/* Quick Add Chips for missing initial admins */}
+                {(!adminUsers.some((a) => a.email.toLowerCase().trim() === 'datpt60@fpt.edu.vn') ||
+                  !adminUsers.some((a) => a.email.toLowerCase().trim() === 'phantiendat221295@gmail.com')) && (
+                  <div className="p-3 bg-amber-50/70 border border-amber-200 rounded-xl flex items-center justify-between flex-wrap gap-2 text-xs">
+                    <span className="text-amber-900 font-medium">Gợi ý khôi phục tài khoản quản trị viên:</span>
+                    <div className="flex items-center gap-2 flex-wrap">
+                      {!adminUsers.some((a) => a.email.toLowerCase().trim() === 'datpt60@fpt.edu.vn') && (
+                        <button
+                          type="button"
+                          onClick={() => onAddAdminUser?.('datpt60@fpt.edu.vn', 'Phan Tiến Đạt (Đào tạo)')}
+                          className="px-2.5 py-1 rounded-lg bg-white border border-amber-300 text-amber-800 font-semibold hover:bg-amber-100 transition-colors cursor-pointer text-xs"
+                        >
+                          + Thêm lại datpt60@fpt.edu.vn
+                        </button>
+                      )}
+                      {!adminUsers.some((a) => a.email.toLowerCase().trim() === 'phantiendat221295@gmail.com') && (
+                        <button
+                          type="button"
+                          onClick={() => onAddAdminUser?.('phantiendat221295@gmail.com', 'Phan Tiến Đạt')}
+                          className="px-2.5 py-1 rounded-lg bg-white border border-amber-300 text-amber-800 font-semibold hover:bg-amber-100 transition-colors cursor-pointer text-xs"
+                        >
+                          + Thêm lại phantiendat221295@gmail.com
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                )}
 
                 <div className="overflow-x-auto rounded-2xl border border-slate-200">
                   <table className="w-full text-left border-collapse text-xs sm:text-sm">
@@ -751,7 +813,7 @@ export const RoleManagementView: React.FC<RoleManagementViewProps> = ({
                                     <span>{admin.name || admin.email}</span>
                                     {isSuper && (
                                       <span className="px-1.5 py-0.2 bg-amber-500 text-white text-[10px] font-black rounded-md">
-                                        SUPER
+                                        ADMIN
                                       </span>
                                     )}
                                   </div>
@@ -763,17 +825,10 @@ export const RoleManagementView: React.FC<RoleManagementViewProps> = ({
                             </td>
 
                             <td className="py-3 px-4">
-                              {isSuper ? (
-                                <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-bold bg-amber-100 text-amber-800 border border-amber-200">
-                                  <span className="w-1.5 h-1.5 rounded-full bg-amber-500" />
-                                  Chủ sở hữu hệ thống (Cố định)
-                                </span>
-                              ) : (
-                                <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-semibold bg-blue-100 text-blue-800 border border-blue-200">
-                                  <span className="w-1.5 h-1.5 rounded-full bg-blue-500" />
-                                  Quản trị viên (Admin)
-                                </span>
-                              )}
+                              <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-semibold bg-emerald-100 text-emerald-800 border border-emerald-200">
+                                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+                                Quản trị viên (Admin)
+                              </span>
                             </td>
 
                             <td className="py-3 px-4 text-xs text-slate-500">
@@ -789,24 +844,15 @@ export const RoleManagementView: React.FC<RoleManagementViewProps> = ({
                             </td>
 
                             <td className="py-3 px-4 text-right">
-                              {isSuper ? (
-                                <span
-                                  title="Tài khoản Chủ sở hữu tối cao luôn duy trì quyền quản trị"
-                                  className="text-xs text-slate-400 font-medium italic cursor-default"
-                                >
-                                  Không thể xóa
-                                </span>
-                              ) : (
-                                <button
-                                  type="button"
-                                  onClick={() => handleRemoveAdminClick(admin.email)}
-                                  className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-xl bg-rose-50 hover:bg-rose-100 text-rose-700 font-semibold text-xs border border-rose-200 transition-colors cursor-pointer"
-                                  title="Thu hồi quyền quản trị của tài khoản này"
-                                >
-                                  <UserX size={13} />
-                                  <span>Thu hồi quyền</span>
-                                </button>
-                              )}
+                              <button
+                                type="button"
+                                onClick={() => handleRemoveAdminClick(admin.email)}
+                                className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-xl bg-rose-50 hover:bg-rose-100 text-rose-700 font-semibold text-xs border border-rose-200 transition-colors cursor-pointer"
+                                title="Thu hồi quyền quản trị của tài khoản này"
+                              >
+                                <UserX size={13} />
+                                <span>Thu hồi quyền</span>
+                              </button>
                             </td>
                           </tr>
                         );
@@ -827,10 +873,10 @@ export const RoleManagementView: React.FC<RoleManagementViewProps> = ({
                     <strong>Khi bạn bấm "Thu hồi quyền":</strong> Email sẽ bị xóa ngay khỏi Firestore. Nếu người đó đang mở tab trình duyệt, hệ thống sẽ tự động tước quyền Admin trong vòng <strong>tối đa 30 giây</strong> (hoặc ngay khi họ reload lại trang).
                   </li>
                   <li>
-                    <strong>Chủ sở hữu tối cao:</strong> Hai tài khoản <code className="bg-slate-200 px-1 py-0.5 rounded text-slate-800 font-mono font-bold">datpt60@fpt.edu.vn</code> và <code className="bg-slate-200 px-1 py-0.5 rounded text-slate-800 font-mono font-bold">phantiendat221295@gmail.com</code> được bảo vệ vĩnh viễn trong hệ thống và không thể bị người khác xóa bỏ.
+                    <strong>Cấp quyền tiện lợi:</strong> Bạn có thể phân quyền cho bất kỳ ai trực tiếp trên màn hình này mà không cần sửa code <code className="bg-slate-200 px-1 py-0.5 rounded text-slate-800 font-mono">App.tsx</code> hay Google Sheets.
                   </li>
                   <li>
-                    <strong>Tiện lợi tuyệt đối:</strong> Bạn có thể phân quyền cho bất kỳ ai trực tiếp trên màn hình này mà không cần sửa code <code className="bg-slate-200 px-1 py-0.5 rounded text-slate-800 font-mono">App.tsx</code> hay Google Sheets.
+                    <strong>Phục hồi nhanh:</strong> Bạn luôn có thể bấm nút <em>"Khôi phục 2 Admin ban đầu"</em> hoặc dùng gợi ý phía trên để thêm lại <code>datpt60@fpt.edu.vn</code> và <code>phantiendat221295@gmail.com</code> bất cứ khi nào.
                   </li>
                 </ul>
               </div>
@@ -900,12 +946,12 @@ export const RoleManagementView: React.FC<RoleManagementViewProps> = ({
             )}
 
             {/* CHỨC NĂNG 1: ĐĂNG NHẬP BẰNG TÀI KHOẢN GOOGLE CHÍNH CHỦ */}
-            <div>
+            <div className="space-y-3">
               <button
                 type="button"
                 disabled={isLoggingIn}
                 onClick={handleTriggerGoogleOAuth}
-                className="w-full py-2.5 px-4 rounded-xl border border-slate-200 hover:border-slate-300 hover:bg-slate-50 bg-white text-slate-700 font-semibold text-xs sm:text-sm flex items-center justify-center gap-2.5 transition-all shadow-2xs cursor-pointer disabled:opacity-60"
+                className="w-full py-2.5 px-4 rounded-xl border border-slate-200 hover:border-blue-400 hover:bg-blue-50/50 bg-white text-slate-700 font-semibold text-xs sm:text-sm flex items-center justify-center gap-2.5 transition-all shadow-2xs cursor-pointer disabled:opacity-60"
               >
                 <svg className="w-4 h-4 shrink-0" viewBox="0 0 24 24">
                   <path
@@ -930,83 +976,58 @@ export const RoleManagementView: React.FC<RoleManagementViewProps> = ({
                 </span>
               </button>
 
-              {/* Card Thiết Lập Google OAuth khi chưa nhập Client ID */}
-              {showGoogleConfig && (
-                <div className="mt-3 p-4 bg-blue-50/80 border border-blue-200 rounded-2xl space-y-3 animate-in fade-in">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-1.5 text-blue-900 font-bold text-xs sm:text-sm">
-                      <Lock size={15} />
-                      <span>Xác thực Google chính thức (Có popup cho phép)</span>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => setShowGoogleConfig(false)}
-                      className="text-slate-400 hover:text-slate-600 text-xs p-1"
-                    >
-                      <X size={15} />
-                    </button>
-                  </div>
-
-                  <p className="text-xs text-blue-800 leading-relaxed">
-                    Để kích hoạt popup của Google với màn hình cho phép (Google OAuth Consent): Hãy nhập mã <strong>Google Cloud Client ID</strong> (được cấp miễn phí):
-                  </p>
-
-                  <div className="space-y-2">
-                    <input
-                      type="text"
-                      value={googleClientIdInput}
-                      onChange={(e) => setGoogleClientIdInput(e.target.value)}
-                      placeholder="ví dụ: 123456...apps.googleusercontent.com"
-                      className="w-full bg-white border border-blue-300 rounded-xl px-3 py-2 text-xs text-slate-800 focus:outline-none"
-                    />
-                    <div className="flex gap-2">
-                      <button
-                        type="button"
-                        disabled={isLoggingIn}
-                        onClick={handleSaveClientIdAndLogin}
-                        className="flex-1 py-1.5 px-3 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold transition-colors cursor-pointer"
-                      >
-                        Lưu & Mở popup Google ngay
-                      </button>
-                      <button
-                        type="button"
-                        onClick={onOpenSheetConfig}
-                        className="py-1.5 px-3 bg-white border border-blue-300 text-blue-700 hover:bg-blue-50 rounded-xl text-xs font-semibold cursor-pointer"
-                      >
-                        Cài đặt
-                      </button>
-                    </div>
-                  </div>
-
-                  <div className="pt-2 border-t border-blue-200/60">
-                    <button
-                      type="button"
-                      onClick={() => setShowAlternateEmailInput(!showAlternateEmailInput)}
-                      className="text-[11px] text-blue-700 hover:underline flex items-center gap-1 font-medium cursor-pointer"
-                    >
-                      <span>Hoặc xác thực nhanh bằng Email Quản trị viên (nếu chưa có Client ID)</span>
-                    </button>
-                    {showAlternateEmailInput && (
-                      <div className="mt-2 flex gap-2">
-                        <input
-                          type="email"
-                          value={alternateEmail}
-                          onChange={(e) => setAlternateEmail(e.target.value)}
-                          placeholder="email@fpt.edu.vn hoặc gmail..."
-                          className="flex-1 bg-white border border-blue-300 rounded-xl px-3 py-1.5 text-xs text-slate-800 focus:outline-none"
-                        />
-                        <button
-                          type="button"
-                          onClick={handleAlternateGoogleLogin}
-                          className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold cursor-pointer"
-                        >
-                          Xác nhận
-                        </button>
-                      </div>
-                    )}
-                  </div>
+              {/* KHỐI ĐĂNG NHẬP NHANH BẰNG EMAIL ADMIN ĐÃ CẤP QUYỀN (FIRESTORE) */}
+              <div className="p-3.5 bg-slate-50 border border-slate-200 rounded-2xl space-y-2.5">
+                <div className="flex items-center justify-between text-xs font-bold text-slate-700">
+                  <span className="flex items-center gap-1.5">
+                    <Mail size={13} className="text-blue-600" />
+                    <span>Hoặc đăng nhập nhanh bằng Email Admin:</span>
+                  </span>
                 </div>
-              )}
+
+                <div className="flex gap-2">
+                  <input
+                    type="email"
+                    value={alternateEmail}
+                    onChange={(e) => setAlternateEmail(e.target.value)}
+                    placeholder="Nhập email admin: ví dụ datpt60@fpt.edu.vn..."
+                    className="flex-1 bg-white border border-slate-300 rounded-xl px-3 py-1.5 text-xs text-slate-800 focus:outline-none focus:border-blue-500"
+                  />
+                  <button
+                    type="button"
+                    disabled={isLoggingIn || !alternateEmail.trim()}
+                    onClick={handleAlternateGoogleLogin}
+                    className="px-3.5 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold cursor-pointer disabled:opacity-50 shrink-0"
+                  >
+                    Vào Admin
+                  </button>
+                </div>
+
+                {/* Gợi ý 2 email Admin để đăng nhập nhanh */}
+                <div className="flex items-center gap-1.5 flex-wrap pt-0.5">
+                  <span className="text-[11px] text-slate-500">Gợi ý tài khoản:</span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setAlternateEmail('datpt60@fpt.edu.vn');
+                      onLoginWithGoogleEmail('datpt60@fpt.edu.vn');
+                    }}
+                    className="px-2 py-0.5 rounded-md bg-white border border-blue-200 text-blue-700 text-[11px] font-semibold hover:bg-blue-50 transition-colors cursor-pointer"
+                  >
+                    datpt60@fpt.edu.vn
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setAlternateEmail('phantiendat221295@gmail.com');
+                      onLoginWithGoogleEmail('phantiendat221295@gmail.com');
+                    }}
+                    className="px-2 py-0.5 rounded-md bg-white border border-blue-200 text-blue-700 text-[11px] font-semibold hover:bg-blue-50 transition-colors cursor-pointer"
+                  >
+                    phantiendat221295@gmail.com
+                  </button>
+                </div>
+              </div>
             </div>
 
             <div className="flex items-center gap-3">

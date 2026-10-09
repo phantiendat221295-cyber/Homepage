@@ -23,6 +23,7 @@ export const DEFAULT_SHEET_CONFIG: GoogleSheetsConfig = {
   permissionsCsvUrl:
     'https://docs.google.com/spreadsheets/d/e/2PACX-1vRSCveJeiShAO-1DAeOusENgYe_8dAqx0P6yZvzZZoOX5ZmoSpGaLah-Y_ldUa-_jNMksVh-ig7Vyxe/pub?gid=0&single=true&output=csv',
   gasWebhookUrl: '',
+  googleClientId: '917238298316-4lcifta46nberb44oebk8c5q4qfdigbh.apps.googleusercontent.com',
   lastSynced: undefined,
   autoSync: true
 };
@@ -70,7 +71,8 @@ export const getStoredConfig = (): GoogleSheetsConfig => {
       if (parsed && (parsed.appsCsvUrl || parsed.notificationsCsvUrl)) {
         return {
           ...DEFAULT_SHEET_CONFIG,
-          ...parsed
+          ...parsed,
+          googleClientId: parsed.googleClientId || DEFAULT_SHEET_CONFIG.googleClientId
         };
       }
     }

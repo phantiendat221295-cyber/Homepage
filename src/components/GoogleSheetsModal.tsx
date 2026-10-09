@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { X, ExternalLink, Check, RefreshCw, FileSpreadsheet, AlertCircle, Copy, Download, KeyRound, ShieldAlert, Lock } from 'lucide-react';
 import { GoogleSheetsConfig } from '../types';
+import { DEFAULT_GOOGLE_CLIENT_ID } from '../services/googleAuthService';
 
 interface GoogleSheetsModalProps {
   isOpen: boolean;
@@ -31,7 +32,7 @@ export const GoogleSheetsModal: React.FC<GoogleSheetsModalProps> = ({
   const [notisUrl, setNotisUrl] = useState(config.notificationsCsvUrl || '');
   const [permissionsUrl, setPermissionsUrl] = useState(config.permissionsCsvUrl || '');
   const [gasWebhookUrl, setGasWebhookUrl] = useState(config.gasWebhookUrl || '');
-  const [googleClientId, setGoogleClientId] = useState(config.googleClientId || '');
+  const [googleClientId, setGoogleClientId] = useState(config.googleClientId || DEFAULT_GOOGLE_CLIENT_ID);
 
   if (!isOpen) return null;
 

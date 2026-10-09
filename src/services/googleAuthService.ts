@@ -13,13 +13,19 @@ export interface GoogleUserProfile {
   email_verified?: boolean;
 }
 
+// Google OAuth Client ID chính thức của hệ thống (Người dùng không cần nhập lại)
+export const DEFAULT_GOOGLE_CLIENT_ID =
+  '917238298316-4lcifta46nberb44oebk8c5q4qfdigbh.apps.googleusercontent.com';
+
 /**
  * Mở hộp thoại đăng nhập Google chính thức (Google OAuth Consent Popup)
  * Yêu cầu người dùng chọn tài khoản Google và cho phép truy cập email / profile
  */
-export const signInWithGoogleOAuth = async (clientId: string): Promise<GoogleUserProfile> => {
+export const signInWithGoogleOAuth = async (clientId?: string): Promise<GoogleUserProfile> => {
+  const effectiveClientId = (clientId && clientId.trim()) ? clientId.trim() : DEFAULT_GOOGLE_CLIENT_ID;
+
   return new Promise((resolve, reject) => {
-    if (!clientId || !clientId.trim()) {
+    if (!effectiveClientId) {
       reject(new Error('CLIENT_ID_MISSING: Chưa cấu hình Google Client ID'));
       return;
     }
@@ -29,7 +35,7 @@ export const signInWithGoogleOAuth = async (clientId: string): Promise<GoogleUse
       if (window.google?.accounts?.oauth2) {
         try {
           const client = window.google.accounts.oauth2.initTokenClient({
-            client_id: clientId.trim(),
+            client_id: effectiveClientId,
             scope: 'https://www.googleapis.com/auth/userinfo.email https://www.googleapis.com/auth/userinfo.profile openid',
             callback: async (response: any) => {
               if (response.error) {
