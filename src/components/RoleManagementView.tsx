@@ -30,6 +30,11 @@ import {
 import { DynamicIcon } from './DynamicIcon';
 import { FptPolySchoolLogo } from './FptPolySchoolLogo';
 import { DEFAULT_GOOGLE_CLIENT_ID } from '../services/googleAuthService';
+import {
+  DEFAULT_ADMIN_USERS,
+  SYSTEM_SUPER_ADMINS,
+  SYSTEM_ADMIN_EMAILS
+} from '../services/firestoreService';
 
 interface RoleManagementViewProps {
   currentRole: 'user' | 'admin';
@@ -184,14 +189,14 @@ export const RoleManagementView: React.FC<RoleManagementViewProps> = ({
     if (!onResetDefaultAdmins) return;
     if (
       window.confirm(
-        'Khôi phục 2 Quản trị viên ban đầu (datpt60@fpt.edu.vn và phantiendat221295@gmail.com) lên Firestore?'
+        'Khôi phục danh sách 8 Quản trị viên ban đầu của hệ thống lên Firestore?'
       )
     ) {
       setAdminActionError(null);
       setAdminActionSuccess(null);
       try {
         await onResetDefaultAdmins();
-        setAdminActionSuccess('Đã khôi phục 2 Quản trị viên mặc định lên Firestore Cloud!');
+        setAdminActionSuccess('Đã khôi phục danh sách 8 Quản trị viên mặc định lên Firestore Cloud!');
       } catch (err: any) {
         setAdminActionError(err.message || 'Lỗi khôi phục Admin');
       }
@@ -805,39 +810,34 @@ export const RoleManagementView: React.FC<RoleManagementViewProps> = ({
                         type="button"
                         onClick={handleResetDefaults}
                         className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-indigo-50 hover:bg-indigo-100 text-indigo-700 text-xs font-bold border border-indigo-200 transition-colors cursor-pointer"
-                        title="Khôi phục lại datpt60@fpt.edu.vn và phantiendat221295@gmail.com"
+                        title="Khôi phục lại danh sách 8 Quản trị viên mặc định của hệ thống"
                       >
                         <RotateCcw size={13} />
-                        <span>Khôi phục 2 Admin ban đầu</span>
+                        <span>Khôi phục 8 Admin ban đầu</span>
                       </button>
                     )}
                   </div>
                 </div>
 
                 {/* Quick Add Chips for missing initial admins */}
-                {(!adminUsers.some((a) => a.email.toLowerCase().trim() === 'datpt60@fpt.edu.vn') ||
-                  !adminUsers.some((a) => a.email.toLowerCase().trim() === 'phantiendat221295@gmail.com')) && (
+                {DEFAULT_ADMIN_USERS.some(
+                  (def) => !adminUsers.some((a) => a.email.toLowerCase().trim() === def.email.toLowerCase().trim())
+                ) && (
                   <div className="p-3 bg-amber-50/70 border border-amber-200 rounded-xl flex items-center justify-between flex-wrap gap-2 text-xs">
-                    <span className="text-amber-900 font-medium">Gợi ý khôi phục tài khoản quản trị viên:</span>
+                    <span className="text-amber-900 font-medium">Gợi ý khôi phục tài khoản quản trị viên hệ thống:</span>
                     <div className="flex items-center gap-2 flex-wrap">
-                      {!adminUsers.some((a) => a.email.toLowerCase().trim() === 'datpt60@fpt.edu.vn') && (
+                      {DEFAULT_ADMIN_USERS.filter(
+                        (def) => !adminUsers.some((a) => a.email.toLowerCase().trim() === def.email.toLowerCase().trim())
+                      ).map((def) => (
                         <button
+                          key={def.email}
                           type="button"
-                          onClick={() => onAddAdminUser?.('datpt60@fpt.edu.vn', 'Phan Tiến Đạt (Đào tạo)')}
+                          onClick={() => onAddAdminUser?.(def.email, def.name)}
                           className="px-2.5 py-1 rounded-lg bg-white border border-amber-300 text-amber-800 font-semibold hover:bg-amber-100 transition-colors cursor-pointer text-xs"
                         >
-                          + Thêm lại datpt60@fpt.edu.vn
+                          + Thêm lại {def.email}
                         </button>
-                      )}
-                      {!adminUsers.some((a) => a.email.toLowerCase().trim() === 'phantiendat221295@gmail.com') && (
-                        <button
-                          type="button"
-                          onClick={() => onAddAdminUser?.('phantiendat221295@gmail.com', 'Phan Tiến Đạt')}
-                          className="px-2.5 py-1 rounded-lg bg-white border border-amber-300 text-amber-800 font-semibold hover:bg-amber-100 transition-colors cursor-pointer text-xs"
-                        >
-                          + Thêm lại phantiendat221295@gmail.com
-                        </button>
-                      )}
+                      ))}
                     </div>
                   </div>
                 )}
@@ -856,9 +856,8 @@ export const RoleManagementView: React.FC<RoleManagementViewProps> = ({
                       {adminUsers.map((admin) => {
                         const isSuper =
                           admin.isSuperAdmin ||
-                          ['datpt60@fpt.edu.vn', 'phantiendat221295@gmail.com'].includes(
-                            admin.email.toLowerCase().trim()
-                          );
+                          SYSTEM_SUPER_ADMINS.includes(admin.email.toLowerCase().trim());
+                        const isOfficial = SYSTEM_ADMIN_EMAILS.includes(admin.email.toLowerCase().trim());
 
                         return (
                           <tr key={admin.email} className="hover:bg-slate-50/80 transition-colors">
@@ -941,7 +940,7 @@ export const RoleManagementView: React.FC<RoleManagementViewProps> = ({
                     <strong>Cấp quyền tiện lợi:</strong> Bạn có thể phân quyền cho bất kỳ ai trực tiếp trên màn hình này mà không cần sửa code <code className="bg-slate-200 px-1 py-0.5 rounded text-slate-800 font-mono">App.tsx</code> hay Google Sheets.
                   </li>
                   <li>
-                    <strong>Phục hồi nhanh:</strong> Bạn luôn có thể bấm nút <em>"Khôi phục 2 Admin ban đầu"</em> hoặc dùng gợi ý phía trên để thêm lại <code>datpt60@fpt.edu.vn</code> và <code>phantiendat221295@gmail.com</code> bất cứ khi nào.
+                    <strong>Phục hồi nhanh:</strong> Bạn luôn có thể bấm nút <em>"Khôi phục 8 Admin ban đầu"</em> hoặc dùng gợi ý phía trên để thêm lại danh sách tài khoản quản trị viên chính thức của trường bất cứ khi nào.
                   </li>
                 </ul>
               </div>
@@ -1122,8 +1121,9 @@ export const RoleManagementView: React.FC<RoleManagementViewProps> = ({
               {/* Danh sách các card admin */}
               <div className="space-y-3 pt-1">
                 {adminUsers.map((admin) => {
-                  const isDatFpt = admin.email.toLowerCase().trim() === 'datpt60@fpt.edu.vn';
-                  const isDatGmail = admin.email.toLowerCase().trim() === 'phantiendat221295@gmail.com';
+                  const clean = admin.email.toLowerCase().trim();
+                  const isSuper = admin.isSuperAdmin || SYSTEM_SUPER_ADMINS.includes(clean);
+                  const isOfficial = SYSTEM_ADMIN_EMAILS.includes(clean);
 
                   return (
                     <div
@@ -1143,9 +1143,14 @@ export const RoleManagementView: React.FC<RoleManagementViewProps> = ({
                             <span className="font-bold text-slate-800 text-xs sm:text-sm truncate">
                               {admin.name || 'Quản trị viên'}
                             </span>
-                            {(isDatFpt || isDatGmail) && (
-                              <span className="px-1.5 py-0.2 bg-blue-100 text-blue-700 text-[10px] font-bold rounded-md">
+                            {isSuper && (
+                              <span className="px-1.5 py-0.2 bg-amber-100 text-amber-800 text-[10px] font-bold rounded-md border border-amber-200">
                                 Quản trị chính
+                              </span>
+                            )}
+                            {!isSuper && isOfficial && (
+                              <span className="px-1.5 py-0.2 bg-blue-100 text-blue-700 text-[10px] font-bold rounded-md">
+                                Quản trị viên
                               </span>
                             )}
                           </div>
@@ -1250,7 +1255,7 @@ export const RoleManagementView: React.FC<RoleManagementViewProps> = ({
                       type="email"
                       value={alternateEmail}
                       onChange={(e) => setAlternateEmail(e.target.value)}
-                      placeholder="Nhập email: ví dụ datpt60@fpt.edu.vn..."
+                      placeholder="Nhập email: ví dụ datpt60@fpt.edu.vn, thuanl2@fpt.edu.vn..."
                       className="flex-1 bg-white border border-slate-300 rounded-xl px-3 py-2 text-xs text-slate-800 focus:outline-none focus:border-blue-500"
                     />
                     <button

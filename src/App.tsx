@@ -74,8 +74,20 @@ export default function App() {
     try {
       const cached = localStorage.getItem('fpt_portal_admin_users');
       if (cached) {
-        const parsed = JSON.parse(cached);
-        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+        const parsed: AdminAccount[] = JSON.parse(cached);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          // Tự động gộp với danh sách 8 quản trị viên mặc định để đảm bảo luôn đủ quyền
+          const existingEmails = new Set(parsed.map((a) => a.email.toLowerCase().trim()));
+          const missing = DEFAULT_ADMIN_USERS.filter(
+            (def) => !existingEmails.has(def.email.toLowerCase().trim())
+          );
+          if (missing.length > 0) {
+            const merged = [...parsed, ...missing];
+            localStorage.setItem('fpt_portal_admin_users', JSON.stringify(merged));
+            return merged;
+          }
+          return parsed;
+        }
       }
     } catch {
       // ignore
@@ -647,7 +659,7 @@ export default function App() {
         console.warn('Lỗi ghi reset admin lên Firestore:', err);
       }
     }
-    showToast('Đã khôi phục 2 Quản trị viên mặc định (datpt60 & phantiendat)!');
+    showToast('Đã khôi phục danh sách 8 Quản trị viên mặc định của hệ thống!');
   };
 
   // ADMIN LOGOUT
