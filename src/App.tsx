@@ -54,7 +54,11 @@ import {
   signOut as firebaseSignOut,
   onAuthStateChanged
 } from 'firebase/auth';
-import { signInWithGoogleOAuth, DEFAULT_GOOGLE_CLIENT_ID } from './services/googleAuthService';
+import {
+  signInWithGoogleOAuth,
+  DEFAULT_GOOGLE_CLIENT_ID,
+  GoogleUserProfile
+} from './services/googleAuthService';
 import { SearchX, Filter, Plus, ShieldCheck, X, Check, Edit3, ShieldAlert, LogOut, FileSpreadsheet, Inbox, Cloud } from 'lucide-react';
 
 export default function App() {
@@ -261,6 +265,12 @@ export default function App() {
       }, 800);
     }
   };
+
+  // Cập nhật tiêu đề trình duyệt tự động theo phân hiệu / cơ sở đào tạo
+  useEffect(() => {
+    const campus = sheetConfig.campusName || 'ĐỒNG NAI';
+    document.title = `FPT PolySchool ${campus} - Quản Lý Đào Tạo`;
+  }, [sheetConfig.campusName]);
 
   // Tự động nạp dữ liệu từ Firestore và lắng nghe thời gian thực khi load trang
   useEffect(() => {
@@ -477,111 +487,43 @@ export default function App() {
     return false;
   };
 
-  // CHỨC NĂNG 1: ĐĂNG NHẬP ADMIN BẰNG GOOGLE AUTH (FIREBASE AUTH POPUP CHÍNH THỨC & FALLBACK GIS)
-  const handleLoginWithGoogleOAuth = async (): Promise<boolean> => {
-    try {
-      // Ưu tiên Firebase Auth Popup theo tiêu chuẩn Skill
-      const provider = new GoogleAuthProvider();
-      provider.setCustomParameters({ prompt: 'select_account' });
-      const cred = await signInWithPopup(auth, provider);
-      const user = cred.user;
-      const cleanEmail = (user.email || '').toLowerCase().trim();
-
-      const latestAdmins = await getAdminUsersFromFirestore();
-      const currentList = latestAdmins.length > 0 ? latestAdmins : adminUsers;
-      const isAuthorized = checkIsAdmin(cleanEmail, currentList);
-
-      if (isAuthorized) {
-        const foundInList = currentList.find(
-          (a) => a.email.toLowerCase().trim() === cleanEmail
-        );
-        const isSuper = SYSTEM_SUPER_ADMINS.map((e) => e.toLowerCase().trim()).includes(cleanEmail);
-
-        const adminAcc: AdminAccount = {
-          email: cleanEmail,
-          passwordOrPin: '',
-          name: user.displayName || foundInList?.name || 'Quản trị viên Google',
-          role: 'admin',
-          avatar: user.photoURL || undefined,
-          isSuperAdmin: isSuper
-        };
-
-        setCurrentAdminUser(adminAcc);
-        sessionStorage.setItem('fpt_portal_admin_user', JSON.stringify(adminAcc));
-        showToast(`Đăng nhập Google thành công! Xin chào ${adminAcc.name}.`);
-        return true;
-      } else {
-        await firebaseSignOut(auth).catch(() => null);
-        throw new Error(
-          `Tài khoản Google "${user.email}" không nằm trong danh sách Quản trị viên được cấp quyền!`
-        );
-      }
-    } catch (firebaseErr: any) {
-      if (firebaseErr.message && firebaseErr.message.includes('không nằm trong danh sách')) {
-        throw firebaseErr;
-      }
-      console.warn('Firebase popup sign-in fallback to Google GIS:', firebaseErr);
-
-      // Fallback: Google Identity Services (GIS)
-      const clientId = sheetConfig.googleClientId || DEFAULT_GOOGLE_CLIENT_ID;
-      const googleProfile = await signInWithGoogleOAuth(clientId);
-      const cleanEmail = googleProfile.email.toLowerCase().trim();
-      const isAuthorized = checkIsAdmin(cleanEmail, adminUsers);
-
-      if (isAuthorized) {
-        const foundInFirestore = adminUsers.find(
-          (a) => a.email.toLowerCase().trim() === cleanEmail
-        );
-        const isSuper = SYSTEM_SUPER_ADMINS.map((e) => e.toLowerCase().trim()).includes(cleanEmail);
-
-        const adminAcc: AdminAccount = {
-          email: googleProfile.email,
-          passwordOrPin: '',
-          name: googleProfile.name || foundInFirestore?.name || 'Quản trị viên Google',
-          role: 'admin',
-          avatar: googleProfile.picture,
-          isSuperAdmin: isSuper
-        };
-
-        setCurrentAdminUser(adminAcc);
-        sessionStorage.setItem('fpt_portal_admin_user', JSON.stringify(adminAcc));
-        showToast(`Đăng nhập Google thành công! Xin chào ${adminAcc.name}.`);
-        return true;
-      } else {
-        throw new Error(
-          `Tài khoản Google "${googleProfile.email}" không nằm trong danh sách Quản trị viên được cấp quyền!`
-        );
-      }
-    }
-  };
-
-  // CHỨC NĂNG 2: XÁC THỰC EMAIL QUẢN TRỊ VIÊN ĐỐI SOÁT VỚI DANH SÁCH ADMIN
-  const handleLoginWithGoogleEmail = async (googleEmail: string): Promise<boolean> => {
-    const cleanInput = googleEmail.toLowerCase().trim();
-    const currentList = adminUsers.length > 0 ? adminUsers : DEFAULT_ADMIN_USERS;
-    const isAuthorized = checkIsAdmin(cleanInput, currentList);
+  // CHỨC NĂNG: ĐĂNG NHẬP ADMIN BẰNG GOOGLE OAUTH 2.0 (ĐỐI SOÁT EMAIL VỚI ADMIN WHITELIST ẨN)
+  const handleLoginWithGoogleProfile = async (profile: GoogleUserProfile): Promise<boolean> => {
+    const cleanEmail = profile.email.toLowerCase().trim();
+    const latestAdmins = await getAdminUsersFromFirestore();
+    const currentList = latestAdmins.length > 0 ? latestAdmins : adminUsers;
+    const isAuthorized = checkIsAdmin(cleanEmail, currentList);
 
     if (isAuthorized) {
       const foundInList = currentList.find(
-        (a) => a.email.toLowerCase().trim() === cleanInput
+        (a) => a.email.toLowerCase().trim() === cleanEmail
       );
-      const isSuper = SYSTEM_SUPER_ADMINS.map((e) => e.toLowerCase().trim()).includes(cleanInput);
+      const isSuper = SYSTEM_SUPER_ADMINS.map((e) => e.toLowerCase().trim()).includes(cleanEmail);
 
       const adminAcc: AdminAccount = {
-        email: cleanInput,
+        email: cleanEmail,
         passwordOrPin: '',
-        name: foundInList?.name || (isSuper ? 'Quản trị viên Cấp cao' : 'Quản trị viên Đào tạo'),
+        name: profile.name || foundInList?.name || 'Quản trị viên Google',
         role: 'admin',
+        avatar: profile.picture,
         isSuperAdmin: isSuper
       };
 
       setCurrentAdminUser(adminAcc);
       sessionStorage.setItem('fpt_portal_admin_user', JSON.stringify(adminAcc));
-      showToast(`Đăng nhập thành công! Xin chào ${adminAcc.name}.`);
+      showToast(`Đăng nhập Google thành công! Xin chào ${adminAcc.name}.`);
       return true;
+    } else {
+      throw new Error(
+        `Tài khoản Google "${profile.email}" chưa được cấp quyền Quản trị viên! Chỉ các tài khoản quản trị viên được cấu hình trong mã nguồn mới có thể truy cập.`
+      );
     }
+  };
 
-    return false;
+  const handleLoginWithGoogleOAuth = async (): Promise<boolean> => {
+    const clientId = sheetConfig.googleClientId || DEFAULT_GOOGLE_CLIENT_ID;
+    const googleProfile = await signInWithGoogleOAuth(clientId);
+    return handleLoginWithGoogleProfile(googleProfile);
   };
 
   // CHỨC NĂNG: CẤP & THU HỒI QUYỀN ADMIN TRỰC TIẾP TRÊN WEB VÀ FIRESTORE
@@ -896,9 +838,8 @@ export default function App() {
           <RoleManagementView
             currentRole={currentRole}
             currentAdminUser={currentAdminUser}
-            onLoginAdmin={handleLoginAdmin}
             onLoginWithGoogleOAuth={handleLoginWithGoogleOAuth}
-            onLoginWithGoogleEmail={handleLoginWithGoogleEmail}
+            onLoginWithGoogleProfile={handleLoginWithGoogleProfile}
             onLogoutAdmin={handleLogoutAdmin}
             apps={apps}
             onAddApp={() => {

@@ -1,5 +1,5 @@
 {
-  "name": "Remix FPT Polyschool Portal - Quản Lý Đào Tạo",
+  "name": "FPT Polyschool Portal - Quản Lý Đào Tạo",
   "description": "Portal Trang chủ tổng hợp liên kết webapp, tra cứu dữ liệu đào tạo, thông báo và tiện ích quản lý đồng bộ từ Google Sheets.",
   "requestFramePermissions": [],
   "majorCapabilities": [

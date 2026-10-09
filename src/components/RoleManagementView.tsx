@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { WebAppItem, AdminAccount, SupportTicket } from '../types';
 import {
   ShieldCheck,
@@ -10,26 +10,29 @@ import {
   Search,
   Lock,
   LogOut,
-  LogIn,
   AlertCircle,
   FileSpreadsheet,
-  Mail,
   Inbox,
   Check,
   Clock,
   RefreshCw,
   Sparkles,
-  UserCheck,
   UserX,
   ShieldAlert,
   RotateCcw,
   X,
   Image as ImageIcon,
-  Palette
+  Palette,
+  Settings,
+  HelpCircle
 } from 'lucide-react';
 import { DynamicIcon } from './DynamicIcon';
 import { FptPolySchoolLogo } from './FptPolySchoolLogo';
-import { DEFAULT_GOOGLE_CLIENT_ID } from '../services/googleAuthService';
+import {
+  DEFAULT_GOOGLE_CLIENT_ID,
+  renderGoogleSignInButton,
+  GoogleUserProfile
+} from '../services/googleAuthService';
 import {
   DEFAULT_ADMIN_USERS,
   SYSTEM_SUPER_ADMINS,
@@ -39,9 +42,8 @@ import {
 interface RoleManagementViewProps {
   currentRole: 'user' | 'admin';
   currentAdminUser: AdminAccount | null;
-  onLoginAdmin: (email: string, pin: string) => boolean | Promise<boolean>;
   onLoginWithGoogleOAuth: () => Promise<boolean>;
-  onLoginWithGoogleEmail: (email: string) => Promise<boolean>;
+  onLoginWithGoogleProfile?: (profile: GoogleUserProfile) => Promise<boolean>;
   onLogoutAdmin: () => void;
   apps: WebAppItem[];
   onAddApp: () => void;
@@ -70,9 +72,8 @@ interface RoleManagementViewProps {
 export const RoleManagementView: React.FC<RoleManagementViewProps> = ({
   currentRole,
   currentAdminUser,
-  onLoginAdmin,
   onLoginWithGoogleOAuth,
-  onLoginWithGoogleEmail,
+  onLoginWithGoogleProfile,
   onLogoutAdmin,
   apps,
   onAddApp,
@@ -97,19 +98,21 @@ export const RoleManagementView: React.FC<RoleManagementViewProps> = ({
   campusName = 'ĐỒNG NAI',
   onSaveLogoAndCampus
 }) => {
-  // Login form state
-  const [loginEmail, setLoginEmail] = useState('');
-  const [loginPass, setLoginPass] = useState('');
+  // Login state
   const [loginError, setLoginError] = useState<string | null>(null);
   const [isLoggingIn, setIsLoggingIn] = useState(false);
+  const [showPopupHelp, setShowPopupHelp] = useState(false);
 
   // Google OAuth setup prompt state
   const [showGoogleConfig, setShowGoogleConfig] = useState(false);
-  const [googleClientIdInput, setGoogleClientIdInput] = useState(googleClientId || DEFAULT_GOOGLE_CLIENT_ID);
-  const [showAlternateEmailInput, setShowAlternateEmailInput] = useState(false);
-  const [alternateEmail, setAlternateEmail] = useState('');
+  const [googleClientIdInput, setGoogleClientIdInput] = useState(
+    googleClientId || DEFAULT_GOOGLE_CLIENT_ID
+  );
 
-  // Admin view tab: 'admins' (Mặc định mở tab Phân Quyền) | 'apps' | 'tickets' | 'logo'
+  // Google Sign-In container ref
+  const googleBtnContainerRef = useRef<HTMLDivElement | null>(null);
+
+  // Admin view tab: 'admins' | 'apps' | 'tickets' | 'logo'
   const [adminTab, setAdminTab] = useState<'admins' | 'apps' | 'tickets' | 'logo'>('admins');
 
   // Custom Logo and Campus state
@@ -126,7 +129,7 @@ export const RoleManagementView: React.FC<RoleManagementViewProps> = ({
     if (campusName) setCampusInput(campusName);
   }, [campusName]);
 
-  // Admin Management Form State
+  // Admin Management Form State (trong màn hình đã xác thực)
   const [newAdminEmail, setNewAdminEmail] = useState('');
   const [newAdminName, setNewAdminName] = useState('');
   const [isAddingAdmin, setIsAddingAdmin] = useState(false);
@@ -148,37 +151,54 @@ export const RoleManagementView: React.FC<RoleManagementViewProps> = ({
     return matchSearch && matchCat;
   });
 
-  const handleLoginSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setLoginError(null);
-    setIsLoggingIn(true);
-    try {
-      const success = await onLoginAdmin(loginEmail.trim(), loginPass.trim());
-      if (!success) {
-        setLoginError(
-          'Email hoặc mật khẩu không chính xác! Hệ thống kiểm tra trực tiếp với dữ liệu trong tab PhanQuyen trên Google Sheets.'
-        );
-      } else {
-        setLoginEmail('');
-        setLoginPass('');
-      }
-    } catch (err: any) {
-      setLoginError(err.message || 'Đăng nhập không thành công.');
-    } finally {
-      setIsLoggingIn(false);
+  // Tự động kết xuất nút Google Sign-In chính thức (GIS renderButton)
+  useEffect(() => {
+    if (currentRole === 'admin') return;
+
+    const effectiveId = googleClientId || DEFAULT_GOOGLE_CLIENT_ID;
+    if (googleBtnContainerRef.current) {
+      const cleanup = renderGoogleSignInButton(
+        googleBtnContainerRef.current,
+        effectiveId,
+        async (profile) => {
+          setLoginError(null);
+          setIsLoggingIn(true);
+          try {
+            if (onLoginWithGoogleProfile) {
+              await onLoginWithGoogleProfile(profile);
+            }
+          } catch (err: any) {
+            setLoginError(err.message || 'Lỗi kiểm tra quyền Quản trị viên.');
+          } finally {
+            setIsLoggingIn(false);
+          }
+        },
+        (err) => {
+          setLoginError(err.message || 'Lỗi khởi chạy Google Sign-In.');
+        }
+      );
+
+      return () => {
+        cleanup?.();
+      };
     }
-  };
+  }, [currentRole, googleClientId, onLoginWithGoogleProfile]);
 
   const handleTriggerGoogleOAuth = async () => {
     setLoginError(null);
+    setShowPopupHelp(false);
     setIsLoggingIn(true);
     try {
       await onLoginWithGoogleOAuth();
     } catch (err: any) {
-      if (err.message?.includes('CLIENT_ID_MISSING')) {
-        setShowGoogleConfig(true);
+      const msg = err.message || '';
+      if (msg.includes('POPUP_BLOCKED') || msg.includes('popup') || msg.includes('Popup')) {
+        setShowPopupHelp(true);
+        setLoginError(
+          'Trình duyệt đang chặn cửa sổ đăng nhập Google. Vui lòng làm theo hướng dẫn mở popup bên dưới hoặc sử dụng nút Đăng nhập chính thức từ Google.'
+        );
       } else {
-        setLoginError(err.message || 'Lỗi đăng nhập với tài khoản Google.');
+        setLoginError(msg || 'Lỗi đăng nhập với tài khoản Google.');
       }
     } finally {
       setIsLoggingIn(false);
@@ -203,7 +223,7 @@ export const RoleManagementView: React.FC<RoleManagementViewProps> = ({
     }
   };
 
-  const handleSaveClientIdAndLogin = async () => {
+  const handleSaveClientId = () => {
     if (!googleClientIdInput.trim()) {
       setLoginError('Vui lòng nhập Google Client ID.');
       return;
@@ -211,37 +231,8 @@ export const RoleManagementView: React.FC<RoleManagementViewProps> = ({
     if (onSaveGoogleClientId) {
       onSaveGoogleClientId(googleClientIdInput.trim());
     }
-    setIsLoggingIn(true);
-    try {
-      await onLoginWithGoogleOAuth();
-      setShowGoogleConfig(false);
-    } catch (err: any) {
-      setLoginError(err.message || 'Lỗi đăng nhập Google với Client ID.');
-    } finally {
-      setIsLoggingIn(false);
-    }
-  };
-
-  const handleAlternateGoogleLogin = async () => {
-    if (!alternateEmail.trim()) {
-      setLoginError('Vui lòng nhập email Google của Quản trị viên.');
-      return;
-    }
+    setShowGoogleConfig(false);
     setLoginError(null);
-    setIsLoggingIn(true);
-    try {
-      const ok = await onLoginWithGoogleEmail(alternateEmail.trim());
-      if (!ok) {
-        setLoginError(`Tài khoản Google "${alternateEmail}" không có quyền Admin trong Google Sheets!`);
-      } else {
-        setShowGoogleConfig(false);
-        setAlternateEmail('');
-      }
-    } catch (err: any) {
-      setLoginError(err.message || 'Lỗi xác thực email Google.');
-    } finally {
-      setIsLoggingIn(false);
-    }
   };
 
   const handleAddAdminSubmit = async (e: React.FormEvent) => {
@@ -317,7 +308,7 @@ export const RoleManagementView: React.FC<RoleManagementViewProps> = ({
             Trung Tâm Phân Quyền & Quản Trị Hệ Thống
           </h2>
           <p className="text-xs sm:text-sm text-slate-500 mt-1">
-            Quyền Người dùng (xem và truy cập) & Quyền Quản trị viên (thêm, sửa, xóa tiện ích và tiếp nhận yêu cầu)
+            Quyền Người dùng (truy cập webapp đào tạo) & Quyền Quản trị viên (quản lý phân quyền, thêm sửa xóa tiện ích)
           </p>
         </div>
 
@@ -337,7 +328,9 @@ export const RoleManagementView: React.FC<RoleManagementViewProps> = ({
         </div>
       </div>
 
-      {/* VIEW DÀNH CHO ADMIN ĐÃ ĐĂNG NHẬP */}
+      {/* ========================================================================= */}
+      {/* 1. GIAO DIỆN KHI ĐÃ ĐĂNG NHẬP ADMIN THÀNH CÔNG (FULL DASHBOARD)           */}
+      {/* ========================================================================= */}
       {currentRole === 'admin' ? (
         <div className="space-y-6">
           {/* Admin Welcome Banner */}
@@ -364,7 +357,7 @@ export const RoleManagementView: React.FC<RoleManagementViewProps> = ({
                   </span>
                 </div>
                 <p className="text-xs sm:text-sm text-emerald-100 mt-0.5">
-                  Tài khoản: <span className="font-semibold underline">{currentAdminUser?.email}</span> • Dữ liệu tự động đồng bộ trên mọi thiết bị
+                  Tài khoản Google: <span className="font-semibold underline">{currentAdminUser?.email}</span> • Đã xác thực qua Google OAuth 2.0
                 </p>
               </div>
             </div>
@@ -383,7 +376,7 @@ export const RoleManagementView: React.FC<RoleManagementViewProps> = ({
 
           {/* Sub Navigation */}
           <div className="flex items-center gap-2 sm:gap-3 border-b border-slate-200 pb-2 overflow-x-auto">
-            {/* TAB 1: PHÂN QUYỀN ADMIN - ĐẶT ĐẦU TIÊN VÀ NỔI BẬT */}
+            {/* TAB 1: PHÂN QUYỀN ADMIN */}
             <button
               onClick={() => setAdminTab('admins')}
               className={`px-4 py-2.5 rounded-xl font-bold text-xs sm:text-sm transition-all cursor-pointer flex items-center gap-2 shrink-0 ${
@@ -440,7 +433,252 @@ export const RoleManagementView: React.FC<RoleManagementViewProps> = ({
             </button>
           </div>
 
-          {/* TAB 1: QUẢN LÝ TIỆN ÍCH */}
+          {/* NỘI DUNG TAB 1: PHÂN QUYỀN ADMIN TRONG CLOUD (CHỈ ADMIN MỚI THẤY) */}
+          {adminTab === 'admins' && (
+            <div className="bg-white rounded-3xl p-6 border border-slate-200 shadow-xs space-y-6">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-slate-100">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-2xl bg-indigo-50 text-indigo-600 flex items-center justify-center shrink-0">
+                    <ShieldCheck size={22} />
+                  </div>
+                  <div>
+                    <h3 className="font-bold text-slate-800 text-lg">
+                      Quản Lý Phân Quyền Quản Trị Viên (Firestore Cloud)
+                    </h3>
+                    <p className="text-xs text-slate-500">
+                      Cấp hoặc thu hồi quyền Admin trực tiếp cho các tài khoản email Google
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-emerald-100 text-emerald-800 border border-emerald-200">
+                    <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+                    Bảo mật thời gian thực
+                  </span>
+                </div>
+              </div>
+
+              {/* Thông báo kết quả thao tác */}
+              {adminActionSuccess && (
+                <div className="p-3.5 bg-emerald-50 border border-emerald-200 text-emerald-800 rounded-2xl text-xs sm:text-sm font-semibold flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <Check size={16} className="text-emerald-600 shrink-0" />
+                    <span>{adminActionSuccess}</span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setAdminActionSuccess(null)}
+                    className="text-emerald-600 hover:text-emerald-800 p-1 cursor-pointer"
+                  >
+                    <X size={14} />
+                  </button>
+                </div>
+              )}
+
+              {adminActionError && (
+                <div className="p-3.5 bg-rose-50 border border-rose-200 text-rose-800 rounded-2xl text-xs sm:text-sm font-semibold flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <AlertCircle size={16} className="text-rose-600 shrink-0" />
+                    <span>{adminActionError}</span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setAdminActionError(null)}
+                    className="text-rose-600 hover:text-rose-800 p-1 cursor-pointer"
+                  >
+                    <X size={14} />
+                  </button>
+                </div>
+              )}
+
+              {/* Form Thêm Admin Mới */}
+              {onAddAdminUser && (
+                <form
+                  onSubmit={handleAddAdminSubmit}
+                  className="p-5 bg-gradient-to-r from-slate-50 via-blue-50/30 to-indigo-50/20 rounded-2xl border border-blue-100 space-y-3"
+                >
+                  <div className="flex items-center gap-2">
+                    <Sparkles size={16} className="text-blue-600" />
+                    <h4 className="text-xs sm:text-sm font-bold text-slate-800">
+                      Cấp Quyền Admin Mới Cho Email Google
+                    </h4>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-12 gap-3 items-end">
+                    <div className="sm:col-span-5">
+                      <label className="block text-[11px] font-bold text-slate-600 mb-1">
+                        Email Google của Quản trị viên <span className="text-rose-500">*</span>
+                      </label>
+                      <input
+                        type="email"
+                        required
+                        value={newAdminEmail}
+                        onChange={(e) => setNewAdminEmail(e.target.value)}
+                        placeholder="ví dụ: giangvien@fpt.edu.vn hoặc gmail..."
+                        className="w-full bg-white border border-slate-200 rounded-xl px-3.5 py-2 text-xs sm:text-sm text-slate-800 focus:outline-none focus:border-blue-500"
+                      />
+                    </div>
+
+                    <div className="sm:col-span-4">
+                      <label className="block text-[11px] font-bold text-slate-600 mb-1">
+                        Họ và Tên Quản trị viên
+                      </label>
+                      <input
+                        type="text"
+                        value={newAdminName}
+                        onChange={(e) => setNewAdminName(e.target.value)}
+                        placeholder="ví dụ: Nguyễn Văn A"
+                        className="w-full bg-white border border-slate-200 rounded-xl px-3.5 py-2 text-xs sm:text-sm text-slate-800 focus:outline-none focus:border-blue-500"
+                      />
+                    </div>
+
+                    <div className="sm:col-span-3">
+                      <button
+                        type="submit"
+                        disabled={isAddingAdmin || !newAdminEmail.trim()}
+                        className="w-full py-2 px-4 rounded-xl bg-blue-600 hover:bg-blue-700 active:bg-blue-800 text-white font-bold text-xs sm:text-sm flex items-center justify-center gap-1.5 transition-all cursor-pointer disabled:opacity-50 shadow-2xs"
+                      >
+                        <Plus size={16} />
+                        <span>{isAddingAdmin ? 'Đang thêm...' : 'Cấp Quyền Admin'}</span>
+                      </button>
+                    </div>
+                  </div>
+                </form>
+              )}
+
+              {/* Bảng Danh Sách Admin Được Quản Lý */}
+              <div className="space-y-3">
+                <div className="flex items-center justify-between flex-wrap gap-2">
+                  <div>
+                    <h4 className="font-bold text-slate-800 text-sm sm:text-base">
+                      Danh sách Quản trị viên hiện hành ({adminUsers.length} tài khoản)
+                    </h4>
+                    <span className="text-[11px] text-slate-500">
+                      Chỉ những người này mới có thể đăng nhập qua Google OAuth 2.0
+                    </span>
+                  </div>
+
+                  <div className="flex items-center gap-2 flex-wrap">
+                    {onResetDefaultAdmins && (
+                      <button
+                        type="button"
+                        onClick={handleResetDefaults}
+                        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-indigo-50 hover:bg-indigo-100 text-indigo-700 text-xs font-bold border border-indigo-200 transition-colors cursor-pointer"
+                        title="Khôi phục lại danh sách 8 Quản trị viên mặc định của hệ thống"
+                      >
+                        <RotateCcw size={13} />
+                        <span>Khôi phục 8 Admin ban đầu</span>
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                <div className="overflow-x-auto rounded-2xl border border-slate-200">
+                  <table className="w-full text-left border-collapse text-xs sm:text-sm">
+                    <thead>
+                      <tr className="bg-slate-50 text-slate-600 font-bold border-b border-slate-200">
+                        <th className="py-3 px-4">Tài khoản Quản trị</th>
+                        <th className="py-3 px-4">Cấp bậc / Quyền hạn</th>
+                        <th className="py-3 px-4">Thời gian cấp</th>
+                        <th className="py-3 px-4 text-right">Thao tác</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100 text-slate-700">
+                      {adminUsers.map((admin) => {
+                        const isSuper =
+                          admin.isSuperAdmin ||
+                          SYSTEM_SUPER_ADMINS.includes(admin.email.toLowerCase().trim());
+
+                        return (
+                          <tr key={admin.email} className="hover:bg-slate-50/80 transition-colors">
+                            <td className="py-3 px-4">
+                              <div className="flex items-center gap-2.5">
+                                <div
+                                  className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 font-bold text-xs ${
+                                    isSuper
+                                      ? 'bg-amber-100 text-amber-800 border border-amber-300'
+                                      : 'bg-blue-100 text-blue-800 border border-blue-200'
+                                  }`}
+                                >
+                                  {admin.name ? admin.name.charAt(0).toUpperCase() : 'A'}
+                                </div>
+                                <div>
+                                  <div className="font-bold text-slate-800 flex items-center gap-1.5">
+                                    <span>{admin.name || admin.email}</span>
+                                    {isSuper && (
+                                      <span className="px-1.5 py-0.2 bg-amber-500 text-white text-[10px] font-black rounded-md">
+                                        ADMIN
+                                      </span>
+                                    )}
+                                  </div>
+                                  <span className="text-xs text-slate-500 font-mono">
+                                    {admin.email}
+                                  </span>
+                                </div>
+                              </div>
+                            </td>
+
+                            <td className="py-3 px-4">
+                              <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-semibold bg-emerald-100 text-emerald-800 border border-emerald-200">
+                                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+                                Quản trị viên (Admin)
+                              </span>
+                            </td>
+
+                            <td className="py-3 px-4 text-xs text-slate-500">
+                              {admin.addedAt
+                                ? new Date(admin.addedAt).toLocaleDateString('vi-VN', {
+                                    hour: '2-digit',
+                                    minute: '2-digit',
+                                    day: '2-digit',
+                                    month: '2-digit',
+                                    year: 'numeric'
+                                  })
+                                : 'Mặc định ban đầu'}
+                            </td>
+
+                            <td className="py-3 px-4 text-right">
+                              <button
+                                type="button"
+                                onClick={() => handleRemoveAdminClick(admin.email)}
+                                className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-xl bg-rose-50 hover:bg-rose-100 text-rose-700 font-semibold text-xs border border-rose-200 transition-colors cursor-pointer"
+                                title="Thu hồi quyền quản trị của tài khoản này"
+                              >
+                                <UserX size={13} />
+                                <span>Thu hồi quyền</span>
+                              </button>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+              {/* Security info box */}
+              <div className="p-4 bg-slate-50 rounded-2xl border border-slate-200 text-xs text-slate-600 space-y-1.5 leading-relaxed">
+                <div className="font-bold text-slate-800 flex items-center gap-1.5">
+                  <ShieldAlert size={15} className="text-amber-600" />
+                  <span>Cơ chế bảo vệ & Thu hồi quyền tự động 30 giây</span>
+                </div>
+                <ul className="list-disc pl-5 space-y-1 text-slate-600">
+                  <li>
+                    <strong>Bảo mật danh sách:</strong> Danh sách Quản trị viên chỉ hiển thị cho người đã đăng nhập Google thành công, hoàn toàn ẩn với người dùng ngoài.
+                  </li>
+                  <li>
+                    <strong>Xác thực OAuth 2.0:</strong> Người dùng bắt buộc phải đăng nhập bằng tài khoản Google chính chủ, hệ thống không cho phép nhập tay hay giả mạo.
+                  </li>
+                  <li>
+                    <strong>Thu hồi tự động:</strong> Khi bạn thu hồi quyền của bất kỳ ai, hệ thống tự động tước quyền Admin của họ trong vòng tối đa 30 giây.
+                  </li>
+                </ul>
+              </div>
+            </div>
+          )}
+
+          {/* NỘI DUNG TAB 2: QUẢN LÝ TIỆN ÍCH */}
           {adminTab === 'apps' && (
             <div className="bg-white rounded-3xl p-6 border border-slate-200 shadow-xs space-y-5">
               <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-4 pb-4 border-b border-slate-100">
@@ -604,7 +842,7 @@ export const RoleManagementView: React.FC<RoleManagementViewProps> = ({
             </div>
           )}
 
-          {/* TAB 2: HỘP THƯ YÊU CẦU HỖ TRỢ */}
+          {/* NỘI DUNG TAB 3: HỘP THƯ YÊU CẦU HỖ TRỢ */}
           {adminTab === 'tickets' && (
             <div className="bg-white rounded-3xl p-6 border border-slate-200 shadow-xs space-y-4">
               <div className="flex items-center justify-between pb-3 border-b border-slate-100">
@@ -695,259 +933,7 @@ export const RoleManagementView: React.FC<RoleManagementViewProps> = ({
             </div>
           )}
 
-          {/* TAB 3: PHÂN QUYỀN & QUẢN LÝ TÀI KHOẢN ADMIN */}
-          {adminTab === 'admins' && (
-            <div className="bg-white rounded-3xl p-6 border border-slate-200 shadow-xs space-y-6">
-              {/* Header */}
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-slate-100">
-                <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 rounded-2xl bg-indigo-50 text-indigo-600 flex items-center justify-center shrink-0">
-                    <ShieldCheck size={22} />
-                  </div>
-                  <div>
-                    <h3 className="font-bold text-slate-800 text-lg">
-                      Quản Lý Phân Quyền Quản Trị Viên (Firestore Cloud)
-                    </h3>
-                    <p className="text-xs text-slate-500">
-                      Cấp hoặc thu hồi quyền Admin trực tiếp trên hệ thống đám mây mà không cần sửa code hay Google Sheets
-                    </p>
-                  </div>
-                </div>
-
-                <div className="flex items-center gap-2">
-                  <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-emerald-100 text-emerald-800 border border-emerald-200">
-                    <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-                    Đồng bộ thời gian thực & Kiểm tra 30s
-                  </span>
-                </div>
-              </div>
-
-              {/* Thông báo kết quả thao tác */}
-              {adminActionSuccess && (
-                <div className="p-3.5 bg-emerald-50 border border-emerald-200 text-emerald-800 rounded-2xl text-xs sm:text-sm font-semibold flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <Check size={16} className="text-emerald-600 shrink-0" />
-                    <span>{adminActionSuccess}</span>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => setAdminActionSuccess(null)}
-                    className="text-emerald-600 hover:text-emerald-800 p-1 cursor-pointer"
-                  >
-                    <X size={14} />
-                  </button>
-                </div>
-              )}
-
-              {adminActionError && (
-                <div className="p-3.5 bg-rose-50 border border-rose-200 text-rose-800 rounded-2xl text-xs sm:text-sm font-semibold flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <AlertCircle size={16} className="text-rose-600 shrink-0" />
-                    <span>{adminActionError}</span>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => setAdminActionError(null)}
-                    className="text-rose-600 hover:text-rose-800 p-1 cursor-pointer"
-                  >
-                    <X size={14} />
-                  </button>
-                </div>
-              )}
-
-              {/* Form Cấp Quyền Admin Mới */}
-              <div className="p-5 bg-gradient-to-r from-blue-50/70 to-indigo-50/50 rounded-2xl border border-blue-200/80 space-y-3">
-                <div className="flex items-center gap-2 font-bold text-xs sm:text-sm text-blue-900">
-                  <UserCheck size={16} className="text-blue-600" />
-                  <span>Cấp quyền Quản trị viên mới</span>
-                </div>
-                <p className="text-xs text-slate-600">
-                  Nhập email Google hoặc email FPT của cán bộ/giảng viên để cấp toàn quyền quản trị (Thêm, sửa, xóa webapp, tiếp nhận yêu cầu hỗ trợ).
-                </p>
-
-                <form onSubmit={handleAddAdminSubmit} className="flex flex-col sm:flex-row gap-3 pt-1">
-                  <input
-                    type="email"
-                    required
-                    value={newAdminEmail}
-                    onChange={(e) => setNewAdminEmail(e.target.value)}
-                    placeholder="Nhập email: vidu@fpt.edu.vn hoặc gmail..."
-                    className="flex-1 bg-white border border-blue-300 rounded-xl px-3.5 py-2.5 text-xs sm:text-sm text-slate-800 focus:outline-none focus:border-blue-500 shadow-2xs"
-                  />
-                  <input
-                    type="text"
-                    value={newAdminName}
-                    onChange={(e) => setNewAdminName(e.target.value)}
-                    placeholder="Họ tên hiển thị (tùy chọn)"
-                    className="sm:w-56 bg-white border border-blue-300 rounded-xl px-3.5 py-2.5 text-xs sm:text-sm text-slate-800 focus:outline-none focus:border-blue-500 shadow-2xs"
-                  />
-                  <button
-                    type="submit"
-                    disabled={isAddingAdmin}
-                    className="px-5 py-2.5 bg-blue-600 hover:bg-blue-700 active:bg-blue-800 text-white rounded-xl text-xs sm:text-sm font-bold transition-all shadow-xs flex items-center justify-center gap-2 cursor-pointer disabled:opacity-60 shrink-0"
-                  >
-                    <Plus size={16} />
-                    <span>{isAddingAdmin ? 'Đang thêm...' : '+ Cấp quyền Admin'}</span>
-                  </button>
-                </form>
-              </div>
-
-              {/* Danh Sách Quản Trị Viên Hiện Tại */}
-              <div className="space-y-3">
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-                  <div>
-                    <h4 className="text-xs sm:text-sm font-bold text-slate-800">
-                      Danh sách Quản trị viên hiện hành ({adminUsers.length} tài khoản)
-                    </h4>
-                    <span className="text-[11px] text-slate-500">
-                      Lưu và đồng bộ tự động theo thời gian thực trên Cloud Firestore
-                    </span>
-                  </div>
-
-                  <div className="flex items-center gap-2 flex-wrap">
-                    {onResetDefaultAdmins && (
-                      <button
-                        type="button"
-                        onClick={handleResetDefaults}
-                        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-indigo-50 hover:bg-indigo-100 text-indigo-700 text-xs font-bold border border-indigo-200 transition-colors cursor-pointer"
-                        title="Khôi phục lại danh sách 8 Quản trị viên mặc định của hệ thống"
-                      >
-                        <RotateCcw size={13} />
-                        <span>Khôi phục 8 Admin ban đầu</span>
-                      </button>
-                    )}
-                  </div>
-                </div>
-
-                {/* Quick Add Chips for missing initial admins */}
-                {DEFAULT_ADMIN_USERS.some(
-                  (def) => !adminUsers.some((a) => a.email.toLowerCase().trim() === def.email.toLowerCase().trim())
-                ) && (
-                  <div className="p-3 bg-amber-50/70 border border-amber-200 rounded-xl flex items-center justify-between flex-wrap gap-2 text-xs">
-                    <span className="text-amber-900 font-medium">Gợi ý khôi phục tài khoản quản trị viên hệ thống:</span>
-                    <div className="flex items-center gap-2 flex-wrap">
-                      {DEFAULT_ADMIN_USERS.filter(
-                        (def) => !adminUsers.some((a) => a.email.toLowerCase().trim() === def.email.toLowerCase().trim())
-                      ).map((def) => (
-                        <button
-                          key={def.email}
-                          type="button"
-                          onClick={() => onAddAdminUser?.(def.email, def.name)}
-                          className="px-2.5 py-1 rounded-lg bg-white border border-amber-300 text-amber-800 font-semibold hover:bg-amber-100 transition-colors cursor-pointer text-xs"
-                        >
-                          + Thêm lại {def.email}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                )}
-
-                <div className="overflow-x-auto rounded-2xl border border-slate-200">
-                  <table className="w-full text-left border-collapse text-xs sm:text-sm">
-                    <thead>
-                      <tr className="bg-slate-50 text-slate-600 font-bold border-b border-slate-200">
-                        <th className="py-3 px-4">Tài khoản Quản trị</th>
-                        <th className="py-3 px-4">Cấp bậc / Quyền hạn</th>
-                        <th className="py-3 px-4">Thời gian cấp</th>
-                        <th className="py-3 px-4 text-right">Thao tác</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-100 text-slate-700">
-                      {adminUsers.map((admin) => {
-                        const isSuper =
-                          admin.isSuperAdmin ||
-                          SYSTEM_SUPER_ADMINS.includes(admin.email.toLowerCase().trim());
-                        const isOfficial = SYSTEM_ADMIN_EMAILS.includes(admin.email.toLowerCase().trim());
-
-                        return (
-                          <tr key={admin.email} className="hover:bg-slate-50/80 transition-colors">
-                            <td className="py-3 px-4">
-                              <div className="flex items-center gap-2.5">
-                                <div
-                                  className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 font-bold text-xs ${
-                                    isSuper
-                                      ? 'bg-amber-100 text-amber-800 border border-amber-300'
-                                      : 'bg-blue-100 text-blue-800 border border-blue-200'
-                                  }`}
-                                >
-                                  {admin.name ? admin.name.charAt(0).toUpperCase() : 'A'}
-                                </div>
-                                <div>
-                                  <div className="font-bold text-slate-800 flex items-center gap-1.5">
-                                    <span>{admin.name || admin.email}</span>
-                                    {isSuper && (
-                                      <span className="px-1.5 py-0.2 bg-amber-500 text-white text-[10px] font-black rounded-md">
-                                        ADMIN
-                                      </span>
-                                    )}
-                                  </div>
-                                  <span className="text-xs text-slate-500 font-mono">
-                                    {admin.email}
-                                  </span>
-                                </div>
-                              </div>
-                            </td>
-
-                            <td className="py-3 px-4">
-                              <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-semibold bg-emerald-100 text-emerald-800 border border-emerald-200">
-                                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
-                                Quản trị viên (Admin)
-                              </span>
-                            </td>
-
-                            <td className="py-3 px-4 text-xs text-slate-500">
-                              {admin.addedAt
-                                ? new Date(admin.addedAt).toLocaleDateString('vi-VN', {
-                                    hour: '2-digit',
-                                    minute: '2-digit',
-                                    day: '2-digit',
-                                    month: '2-digit',
-                                    year: 'numeric'
-                                  })
-                                : 'Mặc định ban đầu'}
-                            </td>
-
-                            <td className="py-3 px-4 text-right">
-                              <button
-                                type="button"
-                                onClick={() => handleRemoveAdminClick(admin.email)}
-                                className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-xl bg-rose-50 hover:bg-rose-100 text-rose-700 font-semibold text-xs border border-rose-200 transition-colors cursor-pointer"
-                                title="Thu hồi quyền quản trị của tài khoản này"
-                              >
-                                <UserX size={13} />
-                                <span>Thu hồi quyền</span>
-                              </button>
-                            </td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-
-              {/* Hộp Giải Thích An Toàn / Security Notice */}
-              <div className="p-4 bg-slate-50 rounded-2xl border border-slate-200 text-xs text-slate-600 space-y-1.5 leading-relaxed">
-                <div className="font-bold text-slate-800 flex items-center gap-1.5">
-                  <ShieldAlert size={15} className="text-amber-600" />
-                  <span>Cơ chế bảo vệ & Thu hồi quyền tự động</span>
-                </div>
-                <ul className="list-disc pl-5 space-y-1 text-slate-600">
-                  <li>
-                    <strong>Khi bạn bấm "Thu hồi quyền":</strong> Email sẽ bị xóa ngay khỏi Firestore. Nếu người đó đang mở tab trình duyệt, hệ thống sẽ tự động tước quyền Admin trong vòng <strong>tối đa 30 giây</strong> (hoặc ngay khi họ reload lại trang).
-                  </li>
-                  <li>
-                    <strong>Cấp quyền tiện lợi:</strong> Bạn có thể phân quyền cho bất kỳ ai trực tiếp trên màn hình này mà không cần sửa code <code className="bg-slate-200 px-1 py-0.5 rounded text-slate-800 font-mono">App.tsx</code> hay Google Sheets.
-                  </li>
-                  <li>
-                    <strong>Phục hồi nhanh:</strong> Bạn luôn có thể bấm nút <em>"Khôi phục 8 Admin ban đầu"</em> hoặc dùng gợi ý phía trên để thêm lại danh sách tài khoản quản trị viên chính thức của trường bất cứ khi nào.
-                  </li>
-                </ul>
-              </div>
-            </div>
-          )}
-
-          {/* TAB 4: TÙY CHỈNH LOGO & PHÂN HIỆU */}
+          {/* NỘI DUNG TAB 4: TÙY CHỈNH LOGO & PHÂN HIỆU */}
           {adminTab === 'logo' && (
             <div className="bg-white rounded-3xl p-6 sm:p-7 border border-slate-200 shadow-xs space-y-6">
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-slate-100">
@@ -1059,166 +1045,94 @@ export const RoleManagementView: React.FC<RoleManagementViewProps> = ({
           )}
         </div>
       ) : (
-        /* GIAO DIỆN PHÂN QUYỀN & ĐĂNG NHẬP DÀNH CHO NGƯỜI DÙNG THƯỜNG */
-        <div className="space-y-6">
-          {/* Thông báo hướng dẫn rõ ràng */}
-          <div className="bg-gradient-to-r from-blue-600 via-indigo-600 to-sky-600 text-white rounded-3xl p-6 sm:p-7 shadow-md">
-            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
-              <div>
-                <div className="flex items-center gap-2 flex-wrap">
-                  <span className="px-2.5 py-0.5 rounded-full bg-white/20 text-[11px] font-extrabold uppercase tracking-wider">
-                    Phân Quyền Trực Tiếp Trên Web
-                  </span>
-                  <span className="px-2.5 py-0.5 rounded-full bg-amber-400 text-amber-950 text-[11px] font-bold">
-                    Cloud Firestore 100%
-                  </span>
-                </div>
-                <h3 className="font-extrabold text-xl sm:text-2xl mt-2 tracking-tight">
-                  Quản Lý Phân Quyền Quản Trị Viên (Admin)
-                </h3>
-                <p className="text-xs sm:text-sm text-blue-100 mt-1 max-w-2xl leading-relaxed">
-                  Để Thêm quyền hoặc Xóa quyền Admin của bất kỳ ai, vui lòng bấm vào nút <strong>"Đăng nhập Quản trị viên"</strong> bên dưới. Mọi thay đổi đều có hiệu lực ngay lập tức và tự động thu hồi sau 30 giây!
-                </p>
+        /* ========================================================================= */
+        /* 2. GIAO DIỆN XÁC THỰC BẢO MẬT: CHỈ ĐĂNG NHẬP GOOGLE OAUTH 2.0             */
+        /* (HOÀN TOÀN ẨN DANH SÁCH ADMIN & KHÔNG CÓ BẤT KỲ CƠ CHẾ BYPASS NÀO)        */
+        /* ========================================================================= */
+        <div className="max-w-2xl mx-auto space-y-6">
+          {/* Header Banner Bảo Mật */}
+          <div className="bg-gradient-to-r from-blue-700 via-indigo-700 to-slate-900 text-white rounded-3xl p-7 shadow-xl relative overflow-hidden">
+            <div className="relative z-10 space-y-2">
+              <div className="flex items-center gap-2">
+                <span className="px-3 py-1 rounded-full bg-white/20 text-[11px] font-extrabold uppercase tracking-wider text-blue-100">
+                  Khu Vực Hạn Chế
+                </span>
+                <span className="px-3 py-1 rounded-full bg-emerald-500/30 text-emerald-200 text-[11px] font-bold border border-emerald-400/30">
+                  Google OAuth 2.0 Verified
+                </span>
               </div>
-
-              <button
-                type="button"
-                onClick={onGoToHome}
-                className="px-4 py-2 rounded-xl bg-white/15 hover:bg-white/25 text-white text-xs sm:text-sm font-semibold transition-colors cursor-pointer shrink-0 border border-white/20"
-              >
-                Về Trang chủ
-              </button>
+              <h3 className="font-extrabold text-2xl tracking-tight text-white">
+                Cổng Xác Thực Quản Trị Viên (Admin)
+              </h3>
+              <p className="text-xs sm:text-sm text-blue-100 leading-relaxed">
+                Hệ thống yêu cầu xác thực danh tính chính thức thông qua tài khoản Google. Danh sách Quản trị viên được bảo mật tuyệt đối trong mã nguồn và máy chủ.
+              </p>
             </div>
           </div>
 
-          <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
-            {/* CỘT TRÁI: BẢNG DANH SÁCH QUẢN TRỊ VIÊN HIỆN CÓ QUYỀN TRÊN CLOUD FIRESTORE */}
-            <div className="lg:col-span-6 bg-white rounded-3xl p-6 sm:p-7 border border-slate-200 shadow-xs space-y-4">
-              <div className="flex items-center justify-between pb-3 border-b border-slate-100">
-                <div className="flex items-center gap-3">
-                  <div className="w-11 h-11 rounded-2xl bg-emerald-100 text-emerald-700 flex items-center justify-center shrink-0">
-                    <ShieldCheck size={22} />
-                  </div>
-                  <div>
-                    <h4 className="font-bold text-slate-800 text-base sm:text-lg">
-                      Danh Sách Admin Đang Hoạt Động
-                    </h4>
-                    <span className="text-[11px] text-slate-500">
-                      Có {adminUsers.length} tài khoản có toàn quyền quản trị
-                    </span>
-                  </div>
-                </div>
-
-                <span className="text-xs bg-emerald-50 text-emerald-700 font-bold px-2.5 py-1 rounded-full border border-emerald-200">
-                  Thời gian thực
-                </span>
+          {/* Card Đăng Nhập Chính */}
+          <div className="bg-white rounded-3xl p-7 sm:p-9 border border-slate-200 shadow-md space-y-6">
+            <div className="flex items-center gap-3.5 pb-4 border-b border-slate-100">
+              <div className="w-12 h-12 rounded-2xl bg-blue-50 text-blue-600 flex items-center justify-center shrink-0">
+                <Lock size={24} />
               </div>
-
-              <p className="text-xs text-slate-600">
-                Bấm trực tiếp vào tài khoản Quản trị viên của bạn dưới đây để mở giao diện thêm/xóa quyền:
-              </p>
-
-              {/* Danh sách các card admin */}
-              <div className="space-y-3 pt-1">
-                {adminUsers.map((admin) => {
-                  const clean = admin.email.toLowerCase().trim();
-                  const isSuper = admin.isSuperAdmin || SYSTEM_SUPER_ADMINS.includes(clean);
-                  const isOfficial = SYSTEM_ADMIN_EMAILS.includes(clean);
-
-                  return (
-                    <div
-                      key={admin.email}
-                      className="p-3.5 rounded-2xl border border-slate-200 hover:border-blue-300 bg-slate-50/70 hover:bg-blue-50/30 transition-all flex flex-col sm:flex-row sm:items-center justify-between gap-3"
-                    >
-                      <div className="flex items-center gap-3 min-w-0">
-                        <div className="w-10 h-10 rounded-xl bg-blue-100 text-blue-700 flex items-center justify-center shrink-0 font-black text-sm">
-                          {admin.avatar ? (
-                            <img src={admin.avatar} alt={admin.name} className="w-full h-full rounded-xl object-cover" />
-                          ) : (
-                            admin.name.slice(0, 2).toUpperCase()
-                          )}
-                        </div>
-                        <div className="min-w-0">
-                          <div className="flex items-center gap-1.5 flex-wrap">
-                            <span className="font-bold text-slate-800 text-xs sm:text-sm truncate">
-                              {admin.name || 'Quản trị viên'}
-                            </span>
-                            {isSuper && (
-                              <span className="px-1.5 py-0.2 bg-amber-100 text-amber-800 text-[10px] font-bold rounded-md border border-amber-200">
-                                Quản trị chính
-                              </span>
-                            )}
-                            {!isSuper && isOfficial && (
-                              <span className="px-1.5 py-0.2 bg-blue-100 text-blue-700 text-[10px] font-bold rounded-md">
-                                Quản trị viên
-                              </span>
-                            )}
-                          </div>
-                          <span className="text-xs text-slate-500 font-mono block truncate">
-                            {admin.email}
-                          </span>
-                        </div>
-                      </div>
-
-                      <button
-                        type="button"
-                        onClick={() => onLoginWithGoogleEmail(admin.email)}
-                        className="px-3.5 py-2 bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 text-white text-xs font-bold rounded-xl shadow-2xs flex items-center justify-center gap-1.5 transition-all cursor-pointer shrink-0"
-                      >
-                        <ShieldCheck size={14} />
-                        <span>Vào Admin ngay</span>
-                      </button>
-                    </div>
-                  );
-                })}
-              </div>
-
-              {/* Hộp bảo mật */}
-              <div className="p-3.5 bg-blue-50/60 rounded-2xl border border-blue-100 text-xs text-blue-900 space-y-1">
-                <span className="font-bold flex items-center gap-1.5">
-                  <ShieldAlert size={14} className="text-blue-600" />
-                  <span>Quy trình thu hồi quyền tự động 30 giây:</span>
-                </span>
-                <p className="text-[11.5px] text-blue-800 leading-relaxed">
-                  Khi bạn đăng nhập và xóa bất kỳ ai khỏi danh sách, người đó sẽ bị thu hồi quyền ngay lập tức trong vòng tối đa 30 giây mà không cần can thiệp thêm!
+              <div>
+                <h4 className="font-bold text-slate-800 text-lg">
+                  Đăng Nhập Với Tài Khoản Google
+                </h4>
+                <p className="text-xs text-slate-500">
+                  Sử dụng tài khoản Google (@fpt.edu.vn hoặc Gmail đã được cấp quyền quản trị)
                 </p>
               </div>
             </div>
 
-            {/* CỘT PHẢI: XÁC THỰC GOOGLE OAUTH HOẶC NHẬP EMAIL ADMIN */}
-            <div className="lg:col-span-6 bg-white rounded-3xl p-6 sm:p-7 border-2 border-emerald-200 shadow-sm space-y-5">
-              <div className="flex items-center justify-between pb-3 border-b border-slate-100">
-                <div className="flex items-center gap-3">
-                  <div className="w-11 h-11 rounded-2xl bg-blue-100 text-blue-600 flex items-center justify-center shrink-0">
-                    <Lock size={22} />
-                  </div>
-                  <div>
-                    <h4 className="font-bold text-slate-800 text-base sm:text-lg">
-                      Xác Thực Đăng Nhập Quản Trị Viên
-                    </h4>
-                    <p className="text-xs text-slate-500">
-                      Đăng nhập để vào giao diện thêm/xóa quyền và quản lý webapp
-                    </p>
-                  </div>
+            {/* Thông báo lỗi nếu có */}
+            {loginError && (
+              <div className="p-4 bg-rose-50 border border-rose-200 rounded-2xl text-xs sm:text-sm text-rose-700 space-y-2 animate-in fade-in">
+                <div className="flex items-start gap-2.5 font-bold">
+                  <AlertCircle size={18} className="shrink-0 text-rose-600 mt-0.5" />
+                  <span>{loginError}</span>
+                </div>
+              </div>
+            )}
+
+            {/* Hướng dẫn khi popup bị chặn */}
+            {showPopupHelp && (
+              <div className="p-4 bg-amber-50 border border-amber-200 rounded-2xl text-xs text-amber-900 space-y-2">
+                <div className="font-bold flex items-center gap-1.5 text-amber-950">
+                  <ShieldAlert size={16} className="text-amber-600" />
+                  <span>Cách xử lý khi trình duyệt chặn cửa sổ Google:</span>
+                </div>
+                <ol className="list-decimal pl-5 space-y-1 text-amber-800">
+                  <li>Nhìn lên góc phải thanh địa chỉ URL của trình duyệt (icon cửa sổ có dấu chéo đỏ).</li>
+                  <li>Bấm vào biểu tượng đó và chọn <strong>"Luôn cho phép cửa sổ bật lên"</strong>.</li>
+                  <li>Hoặc bấm trực tiếp vào nút <strong>"Đăng nhập chính thức từ Google"</strong> ngay dưới đây.</li>
+                </ol>
+              </div>
+            )}
+
+            {/* NÚT GOOGLE SIGN-IN CHÍNH THỨC (Google Identity Services renderButton) */}
+            <div className="space-y-4">
+              <div className="space-y-2 text-center">
+                <label className="text-xs font-bold text-slate-600 uppercase tracking-wider block">
+                  Xác Thực Chính Thức Bằng Google OAuth 2.0
+                </label>
+
+                {/* Container cho nút Google do chính Google SDK kết xuất (không bị popup blocker) */}
+                <div className="flex justify-center items-center py-2 min-h-[44px]">
+                  <div ref={googleBtnContainerRef} id="google-login-btn-container" className="flex justify-center" />
                 </div>
               </div>
 
-              {loginError && (
-                <div className="p-3.5 bg-rose-50 border border-rose-200 rounded-xl text-xs text-rose-700 flex items-start gap-2 animate-in fade-in">
-                  <AlertCircle size={15} className="shrink-0 mt-0.5" />
-                  <span>{loginError}</span>
-                </div>
-              )}
-
-              {/* CÁCH 1: ĐĂNG NHẬP BẰNG TÀI KHOẢN GOOGLE CHÍNH CHỦ */}
-              <div className="space-y-3">
+              {/* Nút bấm trực tiếp thứ hai (Dành cho kích hoạt ngay lập tức) */}
+              <div className="pt-2">
                 <button
                   type="button"
                   disabled={isLoggingIn}
                   onClick={handleTriggerGoogleOAuth}
-                  className="w-full py-3 px-4 rounded-xl border border-slate-200 hover:border-blue-400 hover:bg-blue-50/50 bg-white text-slate-700 font-semibold text-xs sm:text-sm flex items-center justify-center gap-2.5 transition-all shadow-2xs cursor-pointer disabled:opacity-60"
+                  className="w-full py-3.5 px-4 rounded-2xl border-2 border-slate-200 hover:border-blue-500 hover:bg-blue-50/40 bg-white text-slate-700 font-bold text-xs sm:text-sm flex items-center justify-center gap-3 transition-all shadow-2xs cursor-pointer disabled:opacity-60"
                 >
-                  <svg className="w-4 h-4 shrink-0" viewBox="0 0 24 24">
+                  <svg className="w-5 h-5 shrink-0" viewBox="0 0 24 24">
                     <path
                       fill="#4285F4"
                       d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"
@@ -1237,84 +1151,74 @@ export const RoleManagementView: React.FC<RoleManagementViewProps> = ({
                     />
                   </svg>
                   <span>
-                    {isLoggingIn ? 'Đang mở xác thực Google...' : 'Đăng nhập với tài khoản Google'}
+                    {isLoggingIn ? 'Đang kết nối tới Google...' : 'Đăng nhập Google OAuth 2.0'}
                   </span>
                 </button>
+              </div>
+            </div>
 
-                {/* CÁCH 2: NHẬP EMAIL QUẢN TRỊ VIÊN BẤT KỲ */}
-                <div className="p-3.5 bg-slate-50 border border-slate-200 rounded-2xl space-y-2.5">
-                  <div className="flex items-center justify-between text-xs font-bold text-slate-700">
-                    <span className="flex items-center gap-1.5">
-                      <Mail size={13} className="text-blue-600" />
-                      <span>Hoặc nhập Email Quản trị viên để xác thực:</span>
-                    </span>
-                  </div>
+            {/* Thông tin cấu hình OAuth 2.0 Client ID */}
+            <div className="pt-2 border-t border-slate-100 flex items-center justify-between text-xs text-slate-500">
+              <span className="flex items-center gap-1.5 font-mono text-[11px] truncate max-w-xs text-slate-400">
+                <ShieldCheck size={14} className="text-emerald-600 shrink-0" />
+                <span>OAuth Client: {DEFAULT_GOOGLE_CLIENT_ID.slice(0, 15)}...apps</span>
+              </span>
 
-                  <div className="flex gap-2">
-                    <input
-                      type="email"
-                      value={alternateEmail}
-                      onChange={(e) => setAlternateEmail(e.target.value)}
-                      placeholder="Nhập email: ví dụ datpt60@fpt.edu.vn, thuanl2@fpt.edu.vn..."
-                      className="flex-1 bg-white border border-slate-300 rounded-xl px-3 py-2 text-xs text-slate-800 focus:outline-none focus:border-blue-500"
-                    />
-                    <button
-                      type="button"
-                      disabled={isLoggingIn || !alternateEmail.trim()}
-                      onClick={handleAlternateGoogleLogin}
-                      className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold cursor-pointer disabled:opacity-50 shrink-0"
-                    >
-                      Vào Admin
-                    </button>
-                  </div>
+              <button
+                type="button"
+                onClick={() => setShowGoogleConfig(!showGoogleConfig)}
+                className="text-blue-600 hover:text-blue-700 font-semibold cursor-pointer text-xs flex items-center gap-1"
+              >
+                <Settings size={13} />
+                <span>Cấu hình Client ID</span>
+              </button>
+            </div>
+
+            {/* Panel cấu hình Google Client ID (tùy chọn) */}
+            {showGoogleConfig && (
+              <div className="p-4 bg-slate-50 rounded-2xl border border-slate-200 space-y-3 animate-in fade-in">
+                <div className="text-xs font-bold text-slate-700">
+                  Tùy chỉnh Google Cloud OAuth 2.0 Client ID:
+                </div>
+                <input
+                  type="text"
+                  value={googleClientIdInput}
+                  onChange={(e) => setGoogleClientIdInput(e.target.value)}
+                  placeholder="Nhập Google OAuth 2.0 Client ID..."
+                  className="w-full bg-white border border-slate-300 rounded-xl px-3 py-2 text-xs font-mono text-slate-800 focus:outline-none focus:border-blue-500"
+                />
+                <div className="flex items-center justify-end gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setGoogleClientIdInput(DEFAULT_GOOGLE_CLIENT_ID);
+                      if (onSaveGoogleClientId) onSaveGoogleClientId(DEFAULT_GOOGLE_CLIENT_ID);
+                      setShowGoogleConfig(false);
+                    }}
+                    className="px-3 py-1.5 text-xs text-slate-600 hover:text-slate-800 cursor-pointer"
+                  >
+                    Dùng mặc định
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleSaveClientId}
+                    className="px-4 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold cursor-pointer"
+                  >
+                    Lưu Client ID
+                  </button>
                 </div>
               </div>
+            )}
 
-              <div className="flex items-center gap-3">
-                <div className="flex-1 h-px bg-slate-200" />
-                <span className="text-xs text-slate-400 font-semibold uppercase">Hoặc đăng nhập mật khẩu</span>
-                <div className="flex-1 h-px bg-slate-200" />
-              </div>
-
-              {/* CÁCH 3: FORM ĐĂNG NHẬP MẬT KHẨU */}
-              <form onSubmit={handleLoginSubmit} className="space-y-3.5">
-                <div>
-                  <label className="block text-xs font-bold text-slate-700 mb-1">
-                    Email Admin <span className="text-rose-500">*</span>
-                  </label>
-                  <input
-                    type="text"
-                    required
-                    value={loginEmail}
-                    onChange={(e) => setLoginEmail(e.target.value)}
-                    placeholder="Nhập email quản trị viên..."
-                    className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2 text-xs sm:text-sm text-slate-800 focus:bg-white focus:border-emerald-500 focus:outline-none"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-xs font-bold text-slate-700 mb-1">
-                    Mật khẩu <span className="text-rose-500">*</span>
-                  </label>
-                  <input
-                    type="password"
-                    required
-                    value={loginPass}
-                    onChange={(e) => setLoginPass(e.target.value)}
-                    placeholder="Nhập mật khẩu..."
-                    className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2 text-xs sm:text-sm text-slate-800 focus:bg-white focus:border-emerald-500 focus:outline-none"
-                  />
-                </div>
-
-                <button
-                  type="submit"
-                  disabled={isLoggingIn}
-                  className="w-full py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 text-white font-bold text-xs sm:text-sm flex items-center justify-center gap-2 shadow-sm transition-all cursor-pointer disabled:opacity-60"
-                >
-                  <LogIn size={16} />
-                  <span>{isLoggingIn ? 'Đang xác thực...' : 'Đăng nhập quyền Admin'}</span>
-                </button>
-              </form>
+            {/* Nút quay lại trang chủ */}
+            <div className="pt-2 text-center">
+              <button
+                type="button"
+                onClick={onGoToHome}
+                className="text-slate-500 hover:text-slate-800 text-xs font-medium cursor-pointer transition-colors"
+              >
+                ← Quay lại Trang chủ
+              </button>
             </div>
           </div>
         </div>
