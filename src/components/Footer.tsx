@@ -5,15 +5,22 @@ import { FptPolySchoolLogo } from './FptPolySchoolLogo';
 interface FooterProps {
   onOpenGuide: () => void;
   onOpenSupport: () => void;
+  customLogoUrl?: string;
+  campusName?: string;
 }
 
-export const Footer: React.FC<FooterProps> = ({ onOpenGuide, onOpenSupport }) => {
+export const Footer: React.FC<FooterProps> = ({
+  onOpenGuide,
+  onOpenSupport,
+  customLogoUrl,
+  campusName = 'ĐỒNG NAI'
+}) => {
   return (
     <footer className="mt-16 border-t border-slate-200/80 bg-white py-10 px-4 sm:px-6 lg:px-8">
       <div className="max-w-7xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-6 text-xs text-slate-500">
         {/* Brand & info */}
         <div className="flex items-center gap-3">
-          <FptPolySchoolLogo className="h-8" subText="ĐỒNG NAI" />
+          <FptPolySchoolLogo className="h-8" subText={campusName} customLogoUrl={customLogoUrl} />
         </div>
 
         {/* Links */}

@@ -12,6 +12,8 @@ interface HeaderProps {
   isSyncing?: boolean;
   currentRole: 'user' | 'admin';
   onToggleRole: () => void;
+  customLogoUrl?: string;
+  campusName?: string;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -22,7 +24,9 @@ export const Header: React.FC<HeaderProps> = ({
   onOpenSheetConfig,
   isSyncing,
   currentRole,
-  onToggleRole
+  onToggleRole,
+  customLogoUrl,
+  campusName = 'ĐỒNG NAI'
 }) => {
   return (
     <header className="sticky top-0 z-40 bg-white/95 backdrop-blur-md border-b border-slate-100 shadow-xs">
@@ -32,7 +36,7 @@ export const Header: React.FC<HeaderProps> = ({
           onClick={() => onTabChange('home')}
           className="flex items-center cursor-pointer shrink-0 select-none group"
         >
-          <FptPolySchoolLogo subText="ĐỒNG NAI" />
+          <FptPolySchoolLogo subText={campusName} customLogoUrl={customLogoUrl} />
         </div>
 
         {/* CENTER: NAVIGATION MENU (Desktop) */}
@@ -53,20 +57,24 @@ export const Header: React.FC<HeaderProps> = ({
             )}
           </button>
 
-          {/* 2. Phân quyền (Thay cho tab webapp cũ) */}
+          {/* 2. Phân quyền Admin */}
           <button
             onClick={() => onTabChange('roles')}
             className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-sm font-semibold transition-all cursor-pointer relative ${
               activeTab === 'roles'
-                ? 'text-[#0284C7]'
+                ? 'text-[#0284C7] bg-sky-50/70 font-bold'
                 : 'text-slate-600 hover:text-slate-900 hover:bg-slate-50'
             }`}
           >
             <ShieldCheck size={18} className={activeTab === 'roles' ? 'text-[#0284C7]' : 'text-slate-500'} />
-            <span>Phân quyền</span>
-            {currentRole === 'admin' && (
+            <span>Phân quyền Admin</span>
+            {currentRole === 'admin' ? (
               <span className="text-[10px] bg-emerald-100 text-emerald-700 font-bold px-1.5 py-0.2 rounded-full border border-emerald-300">
                 Admin
+              </span>
+            ) : (
+              <span className="text-[10px] bg-amber-100 text-amber-800 font-bold px-1.5 py-0.2 rounded-full border border-amber-200">
+                Cấp quyền
               </span>
             )}
             {activeTab === 'roles' && (
@@ -108,9 +116,9 @@ export const Header: React.FC<HeaderProps> = ({
         </nav>
 
         {/* RIGHT: SEARCH, ROLE BADGE & ACTIONS */}
-        <div className="flex items-center gap-2.5 sm:gap-3">
+        <div className="flex items-center gap-2 sm:gap-2.5">
           {/* Quick Search on Top Header */}
-          <div className="hidden lg:flex items-center relative w-52 xl:w-60">
+          <div className="hidden lg:flex items-center relative w-48 xl:w-56">
             <Search className="w-4 h-4 text-slate-400 absolute left-3 pointer-events-none" />
             <input
               type="text"
@@ -121,47 +129,45 @@ export const Header: React.FC<HeaderProps> = ({
             />
           </div>
 
-          {/* Role Toggle Switcher Badge */}
-          <button
-            onClick={onToggleRole}
-            title={`Bấm để chuyển sang quyền ${currentRole === 'admin' ? 'Người dùng' : 'Quản trị viên'}`}
-            className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer border ${
-              currentRole === 'admin'
-                ? 'bg-emerald-50 border-emerald-300 text-emerald-800 hover:bg-emerald-100 shadow-2xs'
-                : 'bg-slate-100 border-slate-200 text-slate-700 hover:bg-slate-200'
-            }`}
-          >
-            {currentRole === 'admin' ? (
-              <>
-                <ShieldCheck size={14} className="text-emerald-600" />
-                <span>Admin</span>
-              </>
-            ) : (
-              <>
-                <User size={14} className="text-slate-500" />
-                <span className="hidden sm:inline">Người dùng</span>
-              </>
-            )}
-          </button>
+          {/* Role Status & Quick Switch Button */}
+          {currentRole === 'admin' ? (
+            <button
+              onClick={() => onTabChange('roles')}
+              title="Bạn đang ở quyền Quản trị viên. Bấm để quản lý phân quyền"
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer border bg-emerald-50 border-emerald-300 text-emerald-800 hover:bg-emerald-100 shadow-2xs"
+            >
+              <ShieldCheck size={14} className="text-emerald-600 shrink-0" />
+              <span>Admin Đang Bật</span>
+            </button>
+          ) : (
+            <button
+              onClick={() => onTabChange('roles')}
+              title="Bấm để đăng nhập quản trị viên & phân quyền"
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer border bg-blue-50 border-blue-200 text-blue-700 hover:bg-blue-100 shadow-2xs"
+            >
+              <ShieldCheck size={14} className="text-blue-600 shrink-0" />
+              <span>Đăng nhập Admin</span>
+            </button>
+          )}
 
-          {/* Firestore Cloud Sync Badge */}
+          {/* Cloud Database Indicator */}
           <div
-            title="Dữ liệu đồng bộ trực tiếp với Google Firestore (homepage-35a0f)"
-            className="hidden xl:flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl border border-amber-200 bg-amber-50/80 text-amber-800 text-xs font-semibold select-none"
+            title="Dữ liệu thời gian thực được bảo vệ bởi Google Cloud Firestore (homepage-35a0f)"
+            className="hidden xl:flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl border border-sky-200 bg-sky-50/80 text-sky-800 text-xs font-semibold select-none"
           >
-            <span className="w-2 h-2 rounded-full bg-amber-500 animate-pulse shrink-0" />
-            <span>Firestore Cloud</span>
+            <span className="w-2 h-2 rounded-full bg-sky-500 animate-pulse shrink-0" />
+            <span>Cloud Firestore</span>
           </div>
 
-          {/* Google Sheets Sync Button */}
+          {/* Data Settings Button */}
           <button
             onClick={onOpenSheetConfig}
-            title="Cài đặt đồng bộ Google Sheets"
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-emerald-200 bg-emerald-50/70 hover:bg-emerald-100/70 text-emerald-700 text-xs font-semibold transition-colors cursor-pointer"
+            title="Cài đặt hệ thống, Logo & Dữ liệu"
+            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl border border-slate-200 bg-slate-50 hover:bg-slate-100 text-slate-700 text-xs font-semibold transition-colors cursor-pointer"
           >
-            <Table size={14} className="text-emerald-600" />
-            <span className="hidden sm:inline">Google Sheets</span>
-            {isSyncing && <RefreshCw size={12} className="animate-spin ml-0.5 text-emerald-600" />}
+            <Table size={13} className="text-slate-500" />
+            <span className="hidden sm:inline">Cài đặt</span>
+            {isSyncing && <RefreshCw size={11} className="animate-spin ml-0.5 text-blue-600" />}
           </button>
 
           {/* User Profile Avatar */}

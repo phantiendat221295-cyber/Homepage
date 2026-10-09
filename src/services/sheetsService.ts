@@ -14,7 +14,7 @@ const STORAGE_KEYS = {
 // Cloud Shared API endpoint (đồng bộ siêu tốc giữa các thiết bị và máy tính truy cập Vercel)
 const CLOUD_CONFIG_URL = 'https://api.restful-api.dev/objects/ff808181a09d98f701a11aaf889b1edf';
 
-// 3 đường link Google Sheets chính thức của FPT Poly School Đào Tạo
+// Cấu hình mặc định hệ thống FPT Poly School Đào Tạo
 export const DEFAULT_SHEET_CONFIG: GoogleSheetsConfig = {
   appsCsvUrl:
     'https://docs.google.com/spreadsheets/d/e/2PACX-1vS9wRadk5MTgUYCiN2NhZbaJiE7U_b8H07p8_8ZVBaBdbuha0QyLXaQ590-dQedY_yEBfolHA2IxW4g/pub?gid=0&single=true&output=csv',
@@ -24,8 +24,11 @@ export const DEFAULT_SHEET_CONFIG: GoogleSheetsConfig = {
     'https://docs.google.com/spreadsheets/d/e/2PACX-1vRSCveJeiShAO-1DAeOusENgYe_8dAqx0P6yZvzZZoOX5ZmoSpGaLah-Y_ldUa-_jNMksVh-ig7Vyxe/pub?gid=0&single=true&output=csv',
   gasWebhookUrl: '',
   googleClientId: '917238298316-4lcifta46nberb44oebk8c5q4qfdigbh.apps.googleusercontent.com',
+  customLogoUrl: '',
+  campusName: 'ĐỒNG NAI',
+  enableGoogleSheetsSync: false, // Mặc định tắt để ưu tiên 100% Cloud Firestore mượt mà, không dính lỗi CORS
   lastSynced: undefined,
-  autoSync: true
+  autoSync: false
 };
 
 export const normalizeGoogleSheetUrl = (rawUrl: string): string => {

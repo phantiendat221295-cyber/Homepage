@@ -375,27 +375,51 @@ export const ADMINS_COLLECTION = 'admin_users';
 // 2 Tài khoản Quản trị viên ban đầu của hệ thống
 export const SYSTEM_SUPER_ADMINS = ['datpt60@fpt.edu.vn', 'phantiendat221295@gmail.com'];
 
+export const DEFAULT_ADMIN_USERS: AdminAccount[] = [
+  {
+    email: 'datpt60@fpt.edu.vn',
+    name: 'Phan Tiến Đạt (Đào tạo)',
+    role: 'admin',
+    isSuperAdmin: true,
+    addedAt: '2025-01-01',
+    addedBy: 'Hệ thống'
+  },
+  {
+    email: 'phantiendat221295@gmail.com',
+    name: 'Phan Tiến Đạt',
+    role: 'admin',
+    isSuperAdmin: true,
+    addedAt: '2025-01-01',
+    addedBy: 'Hệ thống'
+  }
+];
+
 export const getAdminDocId = (email: string) => {
   return email.toLowerCase().trim().replace(/[^a-zA-Z0-9]/g, '_');
 };
 
 /**
  * Kiểm tra xem một email có quyền admin hay không.
- * Nghiêm ngặt đối soát với danh sách activeAdmins thực tế đang lưu trên Firestore.
- * Nếu đã bị xóa khỏi Firestore -> Trả về FALSE ngay lập tức!
+ * Nghiêm ngặt đối soát với danh sách activeAdmins thực tế đang lưu trên Firestore hoặc mặc định.
  */
 export function checkIsAdmin(email: string, activeAdmins: AdminAccount[]): boolean {
-  if (!email || !email.trim() || !Array.isArray(activeAdmins)) return false;
+  if (!email || !email.trim()) return false;
   const clean = email.toLowerCase().trim();
-  return activeAdmins.some(
+  const list = Array.isArray(activeAdmins) && activeAdmins.length > 0 ? activeAdmins : DEFAULT_ADMIN_USERS;
+  return list.some(
     (a) => a.email && a.email.toLowerCase().trim() === clean && (a.role === 'admin' || !a.role)
   );
 }
 
 /**
  * Lấy danh sách Quản trị viên từ Firestore
+ * Chỉ truy vấn khi người dùng đã xác thực (auth.currentUser) để tuân thủ bảo mật và không bị lỗi quyền
  */
 export async function getAdminUsersFromFirestore(): Promise<AdminAccount[]> {
+  if (!auth.currentUser) {
+    // Khi chưa đăng nhập (người dùng công khai), không thực hiện truy vấn trái phép
+    return DEFAULT_ADMIN_USERS;
+  }
   try {
     const colRef = collection(db, ADMINS_COLLECTION);
     const snapshot = await getDocs(colRef);
@@ -407,20 +431,25 @@ export async function getAdminUsersFromFirestore(): Promise<AdminAccount[]> {
         isSuperAdmin: SYSTEM_SUPER_ADMINS.includes(data.email.toLowerCase().trim())
       });
     });
-    return items;
+    return items.length > 0 ? items : DEFAULT_ADMIN_USERS;
   } catch (error) {
     handleFirestoreError(error, OperationType.LIST, ADMINS_COLLECTION);
-    return [];
+    return DEFAULT_ADMIN_USERS;
   }
 }
 
 /**
  * Lắng nghe danh sách Quản trị viên theo thời gian thực (Realtime onSnapshot)
+ * Tuân thủ quy tắc React Firebase Setup: Chỉ gắn listener khi user đã được xác thực
  */
 export function subscribeAdminUsers(
   onUpdate: (admins: AdminAccount[]) => void,
   onError?: (err: any) => void
 ): () => void {
+  if (!auth.currentUser) {
+    onUpdate(DEFAULT_ADMIN_USERS);
+    return () => {};
+  }
   const colRef = collection(db, ADMINS_COLLECTION);
   return onSnapshot(
     colRef,
@@ -433,7 +462,7 @@ export function subscribeAdminUsers(
           isSuperAdmin: SYSTEM_SUPER_ADMINS.includes(data.email.toLowerCase().trim())
         });
       });
-      onUpdate(items);
+      onUpdate(items.length > 0 ? items : DEFAULT_ADMIN_USERS);
     },
     (error) => {
       handleFirestoreError(error, OperationType.GET, ADMINS_COLLECTION);
@@ -523,6 +552,9 @@ export async function resetDefaultAdminsToFirestore(): Promise<AdminAccount[]> {
  * Khởi tạo 2 Admin ban đầu lên Firestore nếu collection còn hoàn toàn trống
  */
 export async function seedInitialAdminsIfEmpty(): Promise<AdminAccount[]> {
+  if (!auth.currentUser) {
+    return DEFAULT_ADMIN_USERS;
+  }
   try {
     const existing = await getAdminUsersFromFirestore();
     // Nếu Firestore đã có dữ liệu (kể cả chỉ còn 1 admin), không tự động add lại admin đã bị xóa

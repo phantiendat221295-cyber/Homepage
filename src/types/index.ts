@@ -58,6 +58,9 @@ export interface GoogleSheetsConfig {
   permissionsCsvUrl?: string; // Link CSV tab 'PhanQuyen'
   gasWebhookUrl?: string;     // URL Google Apps Script Web App (Tùy chọn: Đồng bộ 2 chiều trực tiếp vào Sheet)
   googleClientId?: string;    // Client ID Google Cloud OAuth (Xác thực Google chính chủ có popup)
+  customLogoUrl?: string;     // URL ảnh logo tùy chỉnh
+  campusName?: string;        // Tên phân hiệu cơ sở (mặc định: ĐỒNG NAI)
+  enableGoogleSheetsSync?: boolean; // Tùy chọn Bật/Tắt đồng bộ Google Sheets (Mặc định: tắt để dùng 100% Firestore siêu tốc)
   lastSynced?: string;
   autoSync: boolean;
   syncError?: string;

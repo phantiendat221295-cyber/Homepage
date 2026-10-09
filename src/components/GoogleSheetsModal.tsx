@@ -33,6 +33,9 @@ export const GoogleSheetsModal: React.FC<GoogleSheetsModalProps> = ({
   const [permissionsUrl, setPermissionsUrl] = useState(config.permissionsCsvUrl || '');
   const [gasWebhookUrl, setGasWebhookUrl] = useState(config.gasWebhookUrl || '');
   const [googleClientId, setGoogleClientId] = useState(config.googleClientId || DEFAULT_GOOGLE_CLIENT_ID);
+  const [customLogoUrl, setCustomLogoUrl] = useState(config.customLogoUrl || '');
+  const [campusName, setCampusName] = useState(config.campusName || 'ĐỒNG NAI');
+  const [enableGoogleSheetsSync, setEnableGoogleSheetsSync] = useState(Boolean(config.enableGoogleSheetsSync));
 
   if (!isOpen) return null;
 
@@ -44,7 +47,10 @@ export const GoogleSheetsModal: React.FC<GoogleSheetsModalProps> = ({
       permissionsCsvUrl: permissionsUrl.trim(),
       gasWebhookUrl: gasWebhookUrl.trim(),
       googleClientId: googleClientId.trim(),
-      autoSync: true
+      customLogoUrl: customLogoUrl.trim(),
+      campusName: campusName.trim(),
+      enableGoogleSheetsSync,
+      autoSync: enableGoogleSheetsSync
     });
   };
 
@@ -152,6 +158,69 @@ export const GoogleSheetsModal: React.FC<GoogleSheetsModalProps> = ({
             >
               Dữ liệu mặc định
             </button>
+          </div>
+
+          {/* LỰA CHỌN: CHẾ ĐỘ HOẠT ĐỘNG (CLOUD FIRESTORE VS GOOGLE SHEETS) */}
+          <div className="p-4 rounded-2xl border border-slate-200 bg-slate-50 space-y-3">
+            <div className="flex items-center justify-between">
+              <div>
+                <span className="text-xs sm:text-sm font-bold text-slate-800">
+                  Chế độ đồng bộ Google Sheets:
+                </span>
+                <p className="text-[11px] text-slate-500">
+                  {enableGoogleSheetsSync
+                    ? 'Đang BẬT đồng bộ từ Google Sheets (dữ liệu sẽ được fetch từ link Sheets).'
+                    : 'Đang TẮT đồng bộ Google Sheets. Hệ thống chạy 100% trên Cloud Firestore (Khuyên dùng: siêu tốc, tự động lưu vĩnh viễn, không lo lỗi CORS).'}
+                </p>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => setEnableGoogleSheetsSync(!enableGoogleSheetsSync)}
+                className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
+                  enableGoogleSheetsSync ? 'bg-emerald-600' : 'bg-slate-300'
+                }`}
+              >
+                <span
+                  className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow-sm ring-0 transition duration-200 ease-in-out ${
+                    enableGoogleSheetsSync ? 'translate-x-5' : 'translate-x-0'
+                  }`}
+                />
+              </button>
+            </div>
+          </div>
+
+          {/* Cài đặt Logo Tùy Chỉnh & Tên Cơ Sở */}
+          <div className="p-4 rounded-2xl border border-blue-200 bg-blue-50/50 space-y-3">
+            <h4 className="text-xs sm:text-sm font-bold text-blue-900 flex items-center gap-1.5">
+              <span>Tùy chỉnh Logo & Tên Phân Hiệu:</span>
+            </h4>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div>
+                <label className="block text-[11px] font-bold text-slate-700 mb-1">
+                  Link ảnh Logo tùy chỉnh (URL):
+                </label>
+                <input
+                  type="url"
+                  value={customLogoUrl}
+                  onChange={(e) => setCustomLogoUrl(e.target.value)}
+                  placeholder="https://... (để trống nếu dùng logo gốc)"
+                  className="w-full bg-white border border-blue-300 rounded-xl px-3 py-1.5 text-xs text-slate-800 focus:outline-none focus:border-blue-500"
+                />
+              </div>
+              <div>
+                <label className="block text-[11px] font-bold text-slate-700 mb-1">
+                  Tên phân hiệu (dưới logo):
+                </label>
+                <input
+                  type="text"
+                  value={campusName}
+                  onChange={(e) => setCampusName(e.target.value)}
+                  placeholder="Ví dụ: ĐỒNG NAI"
+                  className="w-full bg-white border border-blue-300 rounded-xl px-3 py-1.5 text-xs text-slate-800 focus:outline-none focus:border-blue-500"
+                />
+              </div>
+            </div>
           </div>
 
           {/* Input 1: Apps CSV URL */}

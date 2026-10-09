@@ -1,222 +1,137 @@
-import React from 'react';
+import React, { useState } from 'react';
 
 interface FptPolySchoolLogoProps {
   className?: string;
   variant?: 'full' | 'compact' | 'horizontal';
   subText?: string;
+  customLogoUrl?: string;
 }
+
+/**
+ * Official FPT 3-Letter Emblem (Blue F, Orange P, Green T)
+ * Vector paths extracted from official FPT branding standard.
+ */
+export const FptEmblem: React.FC<{ className?: string }> = ({ className = 'h-8 w-auto' }) => (
+  <svg
+    viewBox="0 0 34 21"
+    className={`shrink-0 ${className}`}
+    fill="none"
+    xmlns="http://www.w3.org/2000/svg"
+    aria-label="FPT Logo"
+  >
+    {/* Blue Petal F */}
+    <path
+      d="M6.68439 3.50089C4.75756 3.50089 3.12259 4.75793 2.55021 6.5013C2.53888 6.54111 2.52471 6.58093 2.51338 6.6179L2.41703 6.99331L0 17.499H6.08934C7.90849 17.499 9.45845 16.3415 10.0478 14.7204L10.2774 13.7193L12.6292 3.49805H6.68439V3.50089Z"
+      fill="#08509F"
+    />
+    {/* Orange Petal P */}
+    <path
+      d="M18.1691 0C16.18 0 14.5025 1.34236 13.984 3.17389C13.9443 3.3104 13.9131 3.44976 13.8876 3.59196L9.88379 21H15.8286C17.866 21 19.5746 19.5951 20.0506 17.6981H20.0535L24.1196 0H18.1691Z"
+      fill="#F27123"
+    />
+    {/* Green Petal T */}
+    <path
+      d="M28.0555 3.50098C26.1967 3.50098 24.6099 4.6727 23.9865 6.31937C23.9553 6.40469 23.8448 6.75165 23.8448 6.75165L21.3711 17.5019H27.3159C29.3589 17.5019 31.0732 16.0885 31.5408 14.183C31.5408 14.183 31.5408 14.183 31.5408 14.1858L33.9975 3.50382H28.0555V3.50098Z"
+      fill="#51B748"
+    />
+    {/* Letter F */}
+    <path
+      d="M4.03217 7.37699C3.69781 7.6557 3.48246 7.99413 3.41728 8.26431L2.15918 13.9637H2.23002C2.62105 13.9637 2.98942 13.8243 3.32378 13.5484C3.66097 13.2726 3.87349 12.9341 3.95566 12.5445L4.27869 11.0969H6.97908C7.37011 11.0969 7.74131 10.9576 8.07851 10.6817C8.4157 10.4058 8.63105 10.0646 8.71606 9.67208L8.73023 9.60098H4.61305L4.86524 8.46055H8.76706C9.1581 8.46055 9.52646 8.32119 9.86366 8.04817C10.198 7.7723 10.4049 7.42818 10.4955 7.03855L10.5125 6.96745H5.12593C4.73489 6.96176 4.36653 7.10112 4.03217 7.37699Z"
+      fill="white"
+    />
+    {/* Letter T */}
+    <path
+      d="M31.52 7.30069C31.3047 7.08455 31.0213 6.97363 30.6813 6.97363H25.2975L25.289 7.02198C25.2691 7.12721 25.2578 7.22675 25.2578 7.3206C25.2578 7.6505 25.3683 7.92637 25.5837 8.14535C25.8019 8.3615 26.0824 8.47241 26.4252 8.47241H27.587L26.4196 13.9642H26.4932C26.8843 13.9642 27.2498 13.8248 27.5842 13.5518C27.9185 13.2759 28.1254 12.9375 28.2076 12.545L29.0718 8.46957H31.809L31.8175 8.42122C31.8374 8.32168 31.8487 8.21645 31.8487 8.11407C31.8459 7.78986 31.7354 7.51683 31.52 7.30069Z"
+      fill="white"
+    />
+    {/* Letter P */}
+    <path
+      d="M19.7101 6.96223H16.0718L16.0747 6.95654H14.5785L13.0938 13.9641H13.1646C13.5556 13.9641 13.924 13.8248 14.2555 13.5489C14.587 13.273 14.7967 12.9346 14.8789 12.545L15.1821 11.1059H18.8544C19.2454 11.1059 19.611 10.9666 19.9453 10.6935C20.2768 10.4205 20.4894 10.0792 20.5772 9.68108L20.8521 8.41551C20.8719 8.31597 20.8832 8.21359 20.8832 8.10836C20.8832 7.78414 20.7727 7.51112 20.5517 7.29213C20.3364 7.07315 20.0502 6.96223 19.7101 6.96223ZM15.7488 8.46101H19.3531L19.1038 9.60714H15.4995L15.7488 8.46101Z"
+      fill="white"
+    />
+  </svg>
+);
 
 export const FptPolySchoolLogo: React.FC<FptPolySchoolLogoProps> = ({
   className = 'h-10',
   variant = 'horizontal',
-  subText
+  subText = 'ĐỒNG NAI',
+  customLogoUrl
 }) => {
-  if (variant === 'full') {
-    // Stacked full logo (matching Logo_FPTPolySchool.png directly)
+  const [imgFailed, setImgFailed] = useState(false);
+
+  // If a custom logo image URL is provided and has not failed, render the image
+  if (customLogoUrl && !imgFailed) {
     return (
-      <div className={`flex flex-col items-center justify-center select-none ${className}`}>
-        <svg
-          viewBox="0 0 500 240"
-          className="w-full h-auto max-w-[240px]"
-          fill="none"
-          xmlns="http://www.w3.org/2000/svg"
-        >
-          {/* FPT 3 Petals Emblem */}
-          <g transform="translate(110, 10)">
-            {/* Blue Petal F */}
-            <path
-              d="M32 95 C14 95 0 80 8 50 L22 15 C26 3 38 0 48 0 L72 0 C64 26 50 70 46 84 C43 92 38 95 32 95 Z"
-              fill="#0066B3"
-            />
-            {/* White F */}
-            <text
-              x="36"
-              y="62"
-              fill="#FFFFFF"
-              fontFamily="'Be Vietnam Pro', -apple-system, sans-serif"
-              fontWeight="900"
-              fontStyle="italic"
-              fontSize="48"
-              transform="skewX(-14)"
-            >
-              F
-            </text>
-
-            {/* Orange Petal P */}
-            <path
-              d="M92 108 C76 108 64 96 70 70 L86 20 C90 6 102 0 114 0 L140 0 C130 32 114 82 108 98 C104 105 98 108 92 108 Z"
-              fill="#F26F21"
-            />
-            {/* White P */}
-            <text
-              x="103"
-              y="66"
-              fill="#FFFFFF"
-              fontFamily="'Be Vietnam Pro', -apple-system, sans-serif"
-              fontWeight="900"
-              fontStyle="italic"
-              fontSize="48"
-              transform="skewX(-14)"
-            >
-              P
-            </text>
-
-            {/* Green Petal T */}
-            <path
-              d="M158 95 C142 95 132 82 138 56 L150 16 C154 4 164 0 176 0 L204 0 C194 30 180 72 174 86 C170 92 164 95 158 95 Z"
-              fill="#00A850"
-            />
-            {/* White T */}
-            <text
-              x="166"
-              y="60"
-              fill="#FFFFFF"
-              fontFamily="'Be Vietnam Pro', -apple-system, sans-serif"
-              fontWeight="900"
-              fontStyle="italic"
-              fontSize="46"
-              transform="skewX(-14)"
-            >
-              T
-            </text>
-
-            {/* Registered Trademark symbol ® */}
-            <circle cx="218" cy="80" r="8" stroke="#0066B3" strokeWidth="1.8" fill="none" />
-            <text
-              x="215"
-              y="84"
-              fill="#0066B3"
-              fontFamily="sans-serif"
-              fontWeight="bold"
-              fontSize="10"
-            >
-              R
-            </text>
-          </g>
-
-          {/* FPT POLYSCHOOL Slab-Serif text in bold orange */}
-          <text
-            x="250"
-            y="190"
-            textAnchor="middle"
-            fill="#F26F21"
-            fontFamily="'Rockwell', 'Roboto Slab', 'Georgia', serif"
-            fontWeight="900"
-            fontSize="46"
-            letterSpacing="2"
-          >
-            FPT POLYSCHOOL
-          </text>
-
-          {subText && (
-            <text
-              x="250"
-              y="225"
-              textAnchor="middle"
-              fill="#64748B"
-              fontFamily="'Be Vietnam Pro', sans-serif"
-              fontWeight="800"
-              fontSize="20"
-              letterSpacing="6"
-            >
+      <div className={`flex items-center gap-3 select-none ${className}`}>
+        <img
+          src={customLogoUrl}
+          alt="FPT PolySchool Logo"
+          className="h-10 sm:h-11 w-auto object-contain max-w-[200px] drop-shadow-2xs"
+          onError={() => setImgFailed(true)}
+        />
+        {subText && (
+          <div className="hidden sm:flex flex-col justify-center border-l border-slate-200 pl-2.5">
+            <span className="font-extrabold text-slate-500 text-[10px] tracking-widest uppercase leading-none">
               {subText}
-            </text>
-          )}
-        </svg>
+            </span>
+          </div>
+        )}
       </div>
     );
   }
 
-  // Horizontal navbar variant: crisp, modern, perfectly balanced for the top header
+  // Compact variant: Just the 3 letters FPT emblem
+  if (variant === 'compact') {
+    return (
+      <div className={`inline-flex items-center select-none ${className}`}>
+        <FptEmblem className="h-8 w-auto" />
+      </div>
+    );
+  }
+
+  // Full stacked logo variant (ideal for login screens, hero cards, or large banners)
+  if (variant === 'full') {
+    return (
+      <div className={`flex flex-col items-center justify-center select-none ${className}`}>
+        <FptEmblem className="h-16 w-auto mb-2 drop-shadow-xs" />
+        <div className="flex flex-col items-center text-center">
+          <span
+            className="font-black text-[#F27123] text-2xl tracking-wide uppercase leading-tight"
+            style={{ fontFamily: "'Rockwell', 'Roboto Slab', 'Georgia', serif" }}
+          >
+            FPT POLYSCHOOL
+          </span>
+          {subText && (
+            <span className="font-extrabold text-slate-500 text-xs tracking-widest uppercase mt-1">
+              {subText}
+            </span>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  // Horizontal navbar variant: 3 letters FPT emblem + "FPT POLYSCHOOL" brand text
   return (
     <div className={`flex items-center gap-3 select-none ${className}`}>
-      {/* 3 Petals SVG Emblem */}
-      <svg
-        viewBox="0 0 235 110"
-        className="h-9 w-auto shrink-0 drop-shadow-2xs"
-        fill="none"
-        xmlns="http://www.w3.org/2000/svg"
-      >
-        {/* Blue Petal F */}
-        <path
-          d="M32 98 C14 98 0 82 8 52 L22 15 C26 3 38 0 48 0 L72 0 C64 26 50 72 46 86 C43 94 38 98 32 98 Z"
-          fill="#0066B3"
-        />
-        <text
-          x="35"
-          y="65"
-          fill="#FFFFFF"
-          fontFamily="'Be Vietnam Pro', sans-serif"
-          fontWeight="900"
-          fontStyle="italic"
-          fontSize="48"
-          transform="skewX(-14)"
-        >
-          F
-        </text>
-
-        {/* Orange Petal P */}
-        <path
-          d="M92 110 C76 110 64 96 70 70 L86 20 C90 6 102 0 114 0 L140 0 C130 32 114 82 108 98 C104 106 98 110 92 110 Z"
-          fill="#F26F21"
-        />
-        <text
-          x="102"
-          y="69"
-          fill="#FFFFFF"
-          fontFamily="'Be Vietnam Pro', sans-serif"
-          fontWeight="900"
-          fontStyle="italic"
-          fontSize="48"
-          transform="skewX(-14)"
-        >
-          P
-        </text>
-
-        {/* Green Petal T */}
-        <path
-          d="M158 98 C142 98 132 84 138 58 L150 16 C154 4 164 0 176 0 L204 0 C194 30 180 72 174 88 C170 94 164 98 158 98 Z"
-          fill="#00A850"
-        />
-        <text
-          x="165"
-          y="63"
-          fill="#FFFFFF"
-          fontFamily="'Be Vietnam Pro', sans-serif"
-          fontWeight="900"
-          fontStyle="italic"
-          fontSize="46"
-          transform="skewX(-14)"
-        >
-          T
-        </text>
-
-        {/* ® */}
-        <circle cx="218" cy="80" r="7.5" stroke="#0066B3" strokeWidth="1.6" fill="none" />
-        <text
-          x="215"
-          y="84"
-          fill="#0066B3"
-          fontFamily="sans-serif"
-          fontWeight="bold"
-          fontSize="9.5"
-        >
-          R
-        </text>
-      </svg>
+      {/* 3 Letters FPT SVG Emblem */}
+      <FptEmblem className="h-8 sm:h-9 w-auto drop-shadow-2xs" />
 
       {/* Brand Text */}
       <div className="flex flex-col justify-center">
         <span
-          className="font-black text-[#F26F21] text-base sm:text-[17px] tracking-wider leading-tight"
+          className="font-black text-[#F27123] text-base sm:text-[17px] tracking-wider leading-tight"
           style={{ fontFamily: "'Rockwell', 'Roboto Slab', 'Georgia', serif" }}
         >
           FPT POLYSCHOOL
         </span>
         <span className="font-extrabold text-slate-500 text-[10.5px] tracking-widest uppercase leading-none mt-0.5">
-          {subText || 'ĐỒNG NAI'}
+          {subText}
         </span>
       </div>
     </div>
   );
 };
+
+
