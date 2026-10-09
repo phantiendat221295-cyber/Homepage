@@ -469,32 +469,27 @@ export function checkIsAdmin(email: string, activeAdmins: AdminAccount[]): boole
   return false;
 }
 
+export const SETTINGS_ADMINS_DOC = 'portal_admins';
+
 /**
- * Lấy danh sách Quản trị viên từ Firestore
+ * Lấy danh sách Quản trị viên từ Firestore (Lưu trong collection settings có quyền truy cập đồng bộ)
  */
 export async function getAdminUsersFromFirestore(): Promise<AdminAccount[]> {
   try {
-    const colRef = collection(db, ADMINS_COLLECTION);
-    const snapshot = await getDocs(colRef);
-    const items: AdminAccount[] = [];
-    snapshot.forEach((snap) => {
-      const data = snap.data() as AdminAccount;
-      if (data && data.email) {
-        items.push({
-          ...data,
-          email: data.email.toLowerCase().trim(),
-          isSuperAdmin: SYSTEM_SUPER_ADMINS.includes(data.email.toLowerCase().trim())
-        });
-      }
-    });
-
-    // Nếu Firestore chưa từng được khởi tạo, nạp danh sách ban đầu
-    if (items.length === 0) {
-      await seedInitialAdminsIfEmpty();
-      return DEFAULT_ADMIN_USERS;
+    const docRef = doc(db, 'settings', SETTINGS_ADMINS_DOC);
+    const snap = await getDoc(docRef);
+    if (snap.exists() && Array.isArray(snap.data()?.admins)) {
+      const list: AdminAccount[] = snap.data().admins;
+      return list.map((a) => ({
+        ...a,
+        email: a.email.toLowerCase().trim(),
+        isSuperAdmin: SYSTEM_SUPER_ADMINS.includes(a.email.toLowerCase().trim())
+      }));
     }
 
-    return items;
+    // Nếu Firestore chưa từng có document này, lưu mặc định lên Firestore
+    await saveAdminUsersToFirestore(DEFAULT_ADMIN_USERS);
+    return DEFAULT_ADMIN_USERS;
   } catch (error) {
     console.warn('Lỗi getAdminUsersFromFirestore:', error);
     return DEFAULT_ADMIN_USERS;
@@ -509,22 +504,17 @@ export function subscribeAdminUsers(
   onError?: (err: any) => void
 ): () => void {
   try {
-    const colRef = collection(db, ADMINS_COLLECTION);
+    const docRef = doc(db, 'settings', SETTINGS_ADMINS_DOC);
     return onSnapshot(
-      colRef,
-      (snapshot) => {
-        const items: AdminAccount[] = [];
-        snapshot.forEach((snap) => {
-          const data = snap.data() as AdminAccount;
-          if (data && data.email) {
-            items.push({
-              ...data,
-              email: data.email.toLowerCase().trim(),
-              isSuperAdmin: SYSTEM_SUPER_ADMINS.includes(data.email.toLowerCase().trim())
-            });
-          }
-        });
-        if (items.length > 0) {
+      docRef,
+      (snap) => {
+        if (snap.exists() && Array.isArray(snap.data()?.admins)) {
+          const list: AdminAccount[] = snap.data().admins;
+          const items = list.map((a) => ({
+            ...a,
+            email: a.email.toLowerCase().trim(),
+            isSuperAdmin: SYSTEM_SUPER_ADMINS.includes(a.email.toLowerCase().trim())
+          }));
           onUpdate(items);
         }
       },
@@ -540,6 +530,31 @@ export function subscribeAdminUsers(
 }
 
 /**
+ * Lưu toàn bộ danh sách Quản trị viên lên Firestore
+ */
+export async function saveAdminUsersToFirestore(admins: AdminAccount[]): Promise<void> {
+  const docRef = doc(db, 'settings', SETTINGS_ADMINS_DOC);
+  const sanitized = admins.map((a) => ({
+    email: a.email.toLowerCase().trim(),
+    name: a.name || a.email.split('@')[0],
+    role: a.role || 'admin',
+    isSuperAdmin: SYSTEM_SUPER_ADMINS.includes(a.email.toLowerCase().trim()),
+    addedAt: a.addedAt || new Date().toISOString(),
+    addedBy: a.addedBy || 'Super Admin'
+  }));
+
+  try {
+    await setDoc(docRef, {
+      admins: sanitized,
+      updatedAt: new Date().toISOString()
+    });
+  } catch (error) {
+    console.error('Lỗi lưu admin lên Firestore:', error);
+    throw error;
+  }
+}
+
+/**
  * Thêm một email Quản trị viên vào Firestore
  */
 export async function addAdminUserToFirestore(admin: {
@@ -548,8 +563,8 @@ export async function addAdminUserToFirestore(admin: {
   addedBy?: string;
 }): Promise<void> {
   const cleanEmail = admin.email.toLowerCase().trim();
-  const docId = getAdminDocId(cleanEmail);
-  const docRef = doc(db, ADMINS_COLLECTION, docId);
+  const current = await getAdminUsersFromFirestore();
+  const filtered = current.filter((a) => a.email.toLowerCase().trim() !== cleanEmail);
 
   const payload: AdminAccount = {
     email: cleanEmail,
@@ -560,12 +575,7 @@ export async function addAdminUserToFirestore(admin: {
     addedBy: admin.addedBy || 'Super Admin'
   };
 
-  try {
-    await setDoc(docRef, sanitizeData(payload), { merge: true });
-  } catch (error) {
-    handleFirestoreError(error, OperationType.WRITE, `${ADMINS_COLLECTION}/${docId}`);
-    throw error;
-  }
+  await saveAdminUsersToFirestore([...filtered, payload]);
 }
 
 /**
@@ -577,62 +587,22 @@ export async function removeAdminUserFromFirestore(email: string): Promise<void>
   if (SYSTEM_SUPER_ADMINS.includes(cleanEmail)) {
     throw new Error('Không thể thu hồi quyền của Super Admin hệ thống!');
   }
-  const docId = getAdminDocId(cleanEmail);
-  const docRef = doc(db, ADMINS_COLLECTION, docId);
-
-  try {
-    await deleteDoc(docRef);
-  } catch (error) {
-    handleFirestoreError(error, OperationType.DELETE, `${ADMINS_COLLECTION}/${docId}`);
-    throw error;
-  }
+  const current = await getAdminUsersFromFirestore();
+  const nextList = current.filter((a) => a.email.toLowerCase().trim() !== cleanEmail);
+  await saveAdminUsersToFirestore(nextList);
 }
 
 /**
  * Khôi phục lại danh sách 8 Admin mặc định của hệ thống lên Firestore
  */
 export async function resetDefaultAdminsToFirestore(): Promise<AdminAccount[]> {
-  try {
-    const batch = writeBatch(db);
-
-    for (const item of DEFAULT_ADMIN_USERS) {
-      const docRef = doc(db, ADMINS_COLLECTION, getAdminDocId(item.email));
-      batch.set(docRef, sanitizeData(item), { merge: true });
-    }
-
-    await batch.commit();
-    return await getAdminUsersFromFirestore();
-  } catch (error) {
-    handleFirestoreError(error, OperationType.WRITE, ADMINS_COLLECTION);
-    return DEFAULT_ADMIN_USERS;
-  }
+  await saveAdminUsersToFirestore(DEFAULT_ADMIN_USERS);
+  return DEFAULT_ADMIN_USERS;
 }
 
 /**
  * Khởi tạo 8 Admin ban đầu lên Firestore nếu collection còn hoàn toàn trống
  */
 export async function seedInitialAdminsIfEmpty(): Promise<AdminAccount[]> {
-  try {
-    const colRef = collection(db, ADMINS_COLLECTION);
-    const snap = await getDocs(colRef);
-    if (!snap.empty) {
-      const items: AdminAccount[] = [];
-      snap.forEach((docSnap) => items.push(docSnap.data() as AdminAccount));
-      return items;
-    }
-
-    // Nếu rỗng, khởi tạo toàn bộ danh sách 8 tài khoản quản trị
-    const batch = writeBatch(db);
-    for (const item of DEFAULT_ADMIN_USERS) {
-      const clean = item.email.toLowerCase().trim();
-      const docRef = doc(db, ADMINS_COLLECTION, getAdminDocId(clean));
-      batch.set(docRef, sanitizeData(item), { merge: true });
-    }
-
-    await batch.commit();
-    return DEFAULT_ADMIN_USERS;
-  } catch (error) {
-    console.warn('Lỗi seed initial admins:', error);
-    return DEFAULT_ADMIN_USERS;
-  }
+  return await getAdminUsersFromFirestore();
 }
