@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { WebAppItem, AdminAccount, SupportTicket } from '../types';
+import { WebAppItem, AdminAccount, SupportTicket, NotificationItem, ChecklistItem, SyncLogEntry } from '../types';
 import {
   ShieldCheck,
   User,
@@ -24,7 +24,14 @@ import {
   Image as ImageIcon,
   Palette,
   Settings,
-  HelpCircle
+  HelpCircle,
+  Bell,
+  CheckCircle2,
+  Circle,
+  Users,
+  UserCheck,
+  Calendar,
+  Download
 } from 'lucide-react';
 import { DynamicIcon } from './DynamicIcon';
 import { FptPolySchoolLogo } from './FptPolySchoolLogo';
@@ -67,6 +74,13 @@ interface RoleManagementViewProps {
   customLogoUrl?: string;
   campusName?: string;
   onSaveLogoAndCampus?: (logoUrl: string, campus: string) => Promise<void> | void;
+  notifications?: NotificationItem[];
+  onSaveNotification?: (item: NotificationItem) => Promise<void>;
+  onDeleteNotification?: (id: string) => Promise<void>;
+  onToggleChecklistItem?: (notificationId: string, itemId: string) => Promise<void>;
+  onManualSyncFromSheets?: () => Promise<void>;
+  isManualSyncing?: boolean;
+  syncLogs?: SyncLogEntry[];
 }
 
 export const RoleManagementView: React.FC<RoleManagementViewProps> = ({
@@ -97,7 +111,14 @@ export const RoleManagementView: React.FC<RoleManagementViewProps> = ({
   onSaveGoogleClientId,
   customLogoUrl = '',
   campusName = 'ĐỒNG NAI',
-  onSaveLogoAndCampus
+  onSaveLogoAndCampus,
+  notifications = [],
+  onSaveNotification,
+  onDeleteNotification,
+  onToggleChecklistItem,
+  onManualSyncFromSheets,
+  isManualSyncing = false,
+  syncLogs = []
 }) => {
   // Login state
   const [loginError, setLoginError] = useState<string | null>(null);
@@ -119,7 +140,7 @@ export const RoleManagementView: React.FC<RoleManagementViewProps> = ({
     SYSTEM_SUPER_ADMINS.includes((currentAdminUser?.email || '').toLowerCase().trim());
 
   // Admin view tab: Super Admin mặc định mở 'admins', Admin thường mở 'apps'
-  const [adminTab, setAdminTab] = useState<'admins' | 'apps' | 'tickets' | 'logo'>(() => {
+  const [adminTab, setAdminTab] = useState<'admins' | 'apps' | 'notifications' | 'tickets' | 'logo'>(() => {
     return isSuperAdmin ? 'admins' : 'apps';
   });
 
@@ -128,6 +149,138 @@ export const RoleManagementView: React.FC<RoleManagementViewProps> = ({
       setAdminTab('apps');
     }
   }, [isSuperAdmin, adminTab]);
+
+  // Notifications Management State
+  const [notiSearchTerm, setNotiSearchTerm] = useState('');
+  const [isNotiModalOpen, setIsNotiModalOpen] = useState(false);
+  const [editingNoti, setEditingNoti] = useState<NotificationItem | null>(null);
+  const [notiFormTitle, setNotiFormTitle] = useState('');
+  const [notiFormDate, setNotiFormDate] = useState('');
+  const [notiFormUrl, setNotiFormUrl] = useState('');
+  const [notiFormColor, setNotiFormColor] = useState<'red' | 'blue' | 'purple' | 'orange' | 'green'>('blue');
+  const [notiFormContent, setNotiFormContent] = useState('');
+  const [notiFormIsImportant, setNotiFormIsImportant] = useState(false);
+  const [notiFormAssignedTo, setNotiFormAssignedTo] = useState<string[]>([]);
+  const [notiFormChecklist, setNotiFormChecklist] = useState<ChecklistItem[]>([]);
+  const [newChecklistText, setNewChecklistText] = useState('');
+  const [customAssigneeEmail, setCustomAssigneeEmail] = useState('');
+  const [isSavingNoti, setIsSavingNoti] = useState(false);
+  const [notiSuccessMsg, setNotiSuccessMsg] = useState<string | null>(null);
+  const [notiErrorMsg, setNotiErrorMsg] = useState<string | null>(null);
+
+  const handleOpenAddNoti = () => {
+    setEditingNoti(null);
+    setNotiFormTitle('');
+    setNotiFormDate(new Date().toLocaleDateString('vi-VN'));
+    setNotiFormUrl('');
+    setNotiFormColor('blue');
+    setNotiFormContent('');
+    setNotiFormIsImportant(false);
+    setNotiFormAssignedTo([]);
+    setNotiFormChecklist([]);
+    setNewChecklistText('');
+    setCustomAssigneeEmail('');
+    setNotiSuccessMsg(null);
+    setNotiErrorMsg(null);
+    setIsNotiModalOpen(true);
+  };
+
+  const handleOpenEditNoti = (item: NotificationItem) => {
+    setEditingNoti(item);
+    setNotiFormTitle(item.title);
+    setNotiFormDate(item.date || new Date().toLocaleDateString('vi-VN'));
+    setNotiFormUrl(item.url || '');
+    setNotiFormColor(item.color || 'blue');
+    setNotiFormContent(item.content || '');
+    setNotiFormIsImportant(Boolean(item.isImportant));
+    setNotiFormAssignedTo(item.assignedTo || []);
+    setNotiFormChecklist(item.checklist || []);
+    setNewChecklistText('');
+    setCustomAssigneeEmail('');
+    setNotiSuccessMsg(null);
+    setNotiErrorMsg(null);
+    setIsNotiModalOpen(true);
+  };
+
+  const handleSaveNotiSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!notiFormTitle.trim()) {
+      setNotiErrorMsg('Vui lòng nhập tiêu đề thông báo.');
+      return;
+    }
+
+    if (!onSaveNotification) return;
+
+    setIsSavingNoti(true);
+    setNotiErrorMsg(null);
+    setNotiSuccessMsg(null);
+
+    const itemToSave: NotificationItem = {
+      id: editingNoti ? editingNoti.id : `noti_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+      title: notiFormTitle.trim(),
+      date: notiFormDate.trim() || new Date().toLocaleDateString('vi-VN'),
+      url: notiFormUrl.trim(),
+      color: notiFormColor,
+      content: notiFormContent.trim(),
+      isImportant: notiFormIsImportant,
+      isCustom: true,
+      assignedTo: notiFormAssignedTo,
+      checklist: notiFormChecklist,
+      updatedAt: new Date().toISOString()
+    };
+
+    try {
+      await onSaveNotification(itemToSave);
+      setNotiSuccessMsg(editingNoti ? 'Đã cập nhật thông báo thành công!' : 'Đã tạo thông báo mới thành công!');
+      setTimeout(() => {
+        setIsNotiModalOpen(false);
+        setNotiSuccessMsg(null);
+      }, 1000);
+    } catch (err: any) {
+      setNotiErrorMsg('Lỗi lưu thông báo: ' + (err.message || ''));
+    } finally {
+      setIsSavingNoti(false);
+    }
+  };
+
+  const handleAddChecklistItem = () => {
+    if (!newChecklistText.trim()) return;
+    const newItem: ChecklistItem = {
+      id: `chk_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+      text: newChecklistText.trim(),
+      completed: false
+    };
+    setNotiFormChecklist((prev) => [...prev, newItem]);
+    setNewChecklistText('');
+  };
+
+  const handleRemoveChecklistItem = (id: string) => {
+    setNotiFormChecklist((prev) => prev.filter((c) => c.id !== id));
+  };
+
+  const handleAddAssigneeEmail = () => {
+    const email = customAssigneeEmail.trim().toLowerCase();
+    if (!email || !email.includes('@')) return;
+    if (!notiFormAssignedTo.includes(email)) {
+      setNotiFormAssignedTo((prev) => [...prev, email]);
+    }
+    setCustomAssigneeEmail('');
+  };
+
+  const handleToggleAssignee = (email: string) => {
+    const clean = email.trim().toLowerCase();
+    setNotiFormAssignedTo((prev) =>
+      prev.includes(clean) ? prev.filter((e) => e !== clean) : [...prev, clean]
+    );
+  };
+
+  const filteredNotis = notifications.filter((noti) => {
+    const q = notiSearchTerm.toLowerCase();
+    const matchTitle = noti.title.toLowerCase().includes(q);
+    const matchContent = (noti.content || '').toLowerCase().includes(q);
+    const matchAssignee = (noti.assignedTo || []).some((e) => e.toLowerCase().includes(q));
+    return matchTitle || matchContent || matchAssignee;
+  });
 
   // Custom Logo and Campus state
   const [logoInput, setLogoInput] = useState(customLogoUrl || '');
@@ -437,7 +590,20 @@ export const RoleManagementView: React.FC<RoleManagementViewProps> = ({
               <span>Quản lý Tiện ích Webapps ({apps.length})</span>
             </button>
 
-            {/* TAB 3: HỘP THƯ */}
+            {/* TAB 3: QUẢN LÝ THÔNG BÁO & PHÂN CÔNG */}
+            <button
+              onClick={() => setAdminTab('notifications')}
+              className={`px-4 py-2.5 rounded-xl font-bold text-xs sm:text-sm transition-all cursor-pointer flex items-center gap-2 shrink-0 ${
+                adminTab === 'notifications'
+                  ? 'bg-blue-600 text-white shadow-xs'
+                  : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+              }`}
+            >
+              <Bell size={16} />
+              <span>Thông Báo & Phân Công ({notifications.length})</span>
+            </button>
+
+            {/* TAB 4: HỘP THƯ */}
             <button
               onClick={() => setAdminTab('tickets')}
               className={`px-4 py-2.5 rounded-xl font-bold text-xs sm:text-sm transition-all cursor-pointer flex items-center gap-2 relative shrink-0 ${
@@ -1029,7 +1195,479 @@ export const RoleManagementView: React.FC<RoleManagementViewProps> = ({
             </div>
           )}
 
-          {/* NỘI DUNG TAB 3: HỘP THƯ YÊU CẦU HỖ TRỢ */}
+          {/* NỘI DUNG TAB: QUẢN LÝ THÔNG BÁO & PHÂN CÔNG */}
+          {adminTab === 'notifications' && (
+            <div className="bg-white rounded-3xl p-6 border border-slate-200 shadow-xs space-y-6">
+              {/* Header */}
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-slate-100">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-2xl bg-blue-50 text-blue-600 flex items-center justify-center shrink-0">
+                    <Bell size={22} />
+                  </div>
+                  <div>
+                    <h3 className="font-bold text-slate-800 text-lg">
+                      Quản Lý Thông Báo Đào Tạo & Phân Công Nhiệm Vụ
+                    </h3>
+                    <p className="text-xs text-slate-500 mt-0.5">
+                      Đăng thông báo, phân công người phụ trách, tạo danh mục checklist và theo dõi tiến độ hoàn thành
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2 flex-wrap">
+                  {onManualSyncFromSheets && (
+                    <button
+                      type="button"
+                      onClick={onManualSyncFromSheets}
+                      disabled={isManualSyncing || isSyncing}
+                      className="px-3.5 py-2 rounded-xl text-xs font-bold bg-slate-100 hover:bg-blue-50 text-slate-700 hover:text-blue-700 border border-slate-200 flex items-center gap-1.5 transition-all cursor-pointer disabled:opacity-50"
+                      title="Nạp bổ sung từ Google Sheets mà không mất thông báo hay tiện ích tạo trên web"
+                    >
+                      {isManualSyncing ? (
+                        <RefreshCw size={14} className="animate-spin text-blue-600" />
+                      ) : (
+                        <Download size={14} className="text-blue-600" />
+                      )}
+                      <span>{isManualSyncing ? 'Đang đồng bộ...' : 'Đồng bộ bổ sung từ Sheet'}</span>
+                    </button>
+                  )}
+
+                  <button
+                    type="button"
+                    onClick={handleOpenAddNoti}
+                    className="px-4 py-2 rounded-xl text-xs sm:text-sm font-bold bg-[#0284C7] hover:bg-[#0369A1] text-white shadow-xs flex items-center gap-1.5 transition-all cursor-pointer"
+                  >
+                    <Plus size={16} />
+                    <span>Thêm Thông Báo Mới</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* Search */}
+              <div className="relative max-w-md">
+                <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" size={16} />
+                <input
+                  type="text"
+                  placeholder="Tìm kiếm thông báo theo tiêu đề, nội dung, người được giao..."
+                  value={notiSearchTerm}
+                  onChange={(e) => setNotiSearchTerm(e.target.value)}
+                  className="w-full pl-10 pr-4 py-2 rounded-xl border border-slate-200 bg-slate-50 text-xs sm:text-sm text-slate-800 focus:bg-white focus:border-blue-500 focus:outline-none"
+                />
+              </div>
+
+              {/* Notifications Table */}
+              <div className="overflow-x-auto rounded-2xl border border-slate-100">
+                <table className="w-full text-left text-xs sm:text-sm">
+                  <thead className="bg-slate-50/80 text-slate-500 font-semibold border-b border-slate-100 text-[11px] uppercase tracking-wider">
+                    <tr>
+                      <th className="py-3 px-4">Thông Báo</th>
+                      <th className="py-3 px-4">Ngày & Loại</th>
+                      <th className="py-3 px-4">Người Được Phân Công</th>
+                      <th className="py-3 px-4">Tiến Độ Checklist</th>
+                      <th className="py-3 px-4 text-right">Thao Tác</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {filteredNotis.length === 0 ? (
+                      <tr>
+                        <td colSpan={5} className="py-12 text-center text-slate-400">
+                          <Bell size={36} className="mx-auto mb-2 opacity-40" />
+                          <p className="text-sm">Không tìm thấy thông báo nào phù hợp.</p>
+                        </td>
+                      </tr>
+                    ) : (
+                      filteredNotis.map((noti) => {
+                        const cl = noti.checklist || [];
+                        const completed = cl.filter((c) => c.completed).length;
+                        const pct = cl.length > 0 ? Math.round((completed / cl.length) * 100) : 0;
+                        const assigned = noti.assignedTo || [];
+
+                        return (
+                          <tr key={noti.id} className="hover:bg-slate-50/60 transition-colors">
+                            <td className="py-3.5 px-4 max-w-xs">
+                              <div className="font-bold text-slate-800 line-clamp-1">
+                                {noti.title}
+                              </div>
+                              {noti.content && (
+                                <p className="text-xs text-slate-500 line-clamp-1 mt-0.5">
+                                  {noti.content}
+                                </p>
+                              )}
+                              <div className="flex items-center gap-1.5 mt-1">
+                                {noti.isImportant && (
+                                  <span className="text-[10px] font-bold bg-rose-50 text-rose-600 px-1.5 py-0.2 rounded border border-rose-200">
+                                    Quan trọng
+                                  </span>
+                                )}
+                                {noti.isCustom && (
+                                  <span className="text-[10px] font-semibold bg-emerald-50 text-emerald-700 px-1.5 py-0.2 rounded border border-emerald-200">
+                                    Web
+                                  </span>
+                                )}
+                              </div>
+                            </td>
+
+                            <td className="py-3.5 px-4 whitespace-nowrap">
+                              <span className="text-xs text-slate-600 flex items-center gap-1">
+                                <Calendar size={13} className="text-slate-400" />
+                                <span>{noti.date}</span>
+                              </span>
+                              <span className="inline-block mt-1 text-[10px] uppercase font-bold text-slate-400">
+                                Màu: {noti.color || 'blue'}
+                              </span>
+                            </td>
+
+                            <td className="py-3.5 px-4">
+                              {assigned.length === 0 ? (
+                                <span className="text-xs text-slate-400 italic">Chưa phân công</span>
+                              ) : (
+                                <div className="flex flex-wrap gap-1 max-w-xs">
+                                  {assigned.map((em, idx) => (
+                                    <span
+                                      key={idx}
+                                      className="inline-flex items-center gap-1 text-[11px] bg-blue-50 text-blue-700 px-2 py-0.5 rounded-lg border border-blue-200 font-medium"
+                                    >
+                                      <UserCheck size={11} />
+                                      <span className="truncate max-w-[140px]">{em}</span>
+                                    </span>
+                                  ))}
+                                </div>
+                              )}
+                            </td>
+
+                            <td className="py-3.5 px-4 whitespace-nowrap min-w-[150px]">
+                              {cl.length === 0 ? (
+                                <span className="text-xs text-slate-400 italic">Không có checklist</span>
+                              ) : (
+                                <div className="space-y-1">
+                                  <div className="flex items-center justify-between text-xs font-semibold text-slate-700">
+                                    <span>{completed}/{cl.length} xong</span>
+                                    <span className={pct === 100 ? 'text-emerald-600' : 'text-blue-600'}>{pct}%</span>
+                                  </div>
+                                  <div className="w-28 bg-slate-100 h-1.5 rounded-full overflow-hidden">
+                                    <div
+                                      className={`h-full ${pct === 100 ? 'bg-emerald-500' : 'bg-blue-500'}`}
+                                      style={{ width: `${pct}%` }}
+                                    />
+                                  </div>
+                                </div>
+                              )}
+                            </td>
+
+                            <td className="py-3.5 px-4 text-right whitespace-nowrap">
+                              <div className="flex items-center justify-end gap-1.5">
+                                <button
+                                  type="button"
+                                  onClick={() => handleOpenEditNoti(noti)}
+                                  className="p-1.5 rounded-lg bg-slate-100 hover:bg-blue-50 text-slate-600 hover:text-blue-600 transition-colors cursor-pointer"
+                                  title="Chỉnh sửa thông báo"
+                                >
+                                  <Edit3 size={15} />
+                                </button>
+                                {onDeleteNotification && (
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      if (window.confirm(`Bạn có chắc muốn xóa thông báo "${noti.title}" không?`)) {
+                                        onDeleteNotification(noti.id);
+                                      }
+                                    }}
+                                    className="p-1.5 rounded-lg bg-slate-100 hover:bg-rose-50 text-slate-600 hover:text-rose-600 transition-colors cursor-pointer"
+                                    title="Xóa thông báo"
+                                  >
+                                    <Trash2 size={15} />
+                                  </button>
+                                )}
+                              </div>
+                            </td>
+                          </tr>
+                        );
+                      })
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
+          {/* MODAL THÊM / SỬA THÔNG BÁO */}
+          {isNotiModalOpen && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-xs animate-in fade-in duration-200">
+              <div className="bg-white rounded-3xl max-w-xl w-full max-h-[90vh] p-6 shadow-2xl border border-slate-100 flex flex-col space-y-4 overflow-y-auto">
+                <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+                  <div className="flex items-center gap-2.5">
+                    <div className="w-9 h-9 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center">
+                      <Bell size={20} />
+                    </div>
+                    <div>
+                      <h3 className="font-bold text-slate-800 text-base">
+                        {editingNoti ? 'Chỉnh Sửa Thông Báo' : 'Tạo Thông Báo Mới'}
+                      </h3>
+                      <p className="text-xs text-slate-400">
+                        {editingNoti ? 'Cập nhật nội dung, người phụ trách và checklist' : 'Lưu trữ trên Firestore & đồng bộ Google Sheets'}
+                      </p>
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => setIsNotiModalOpen(false)}
+                    className="w-8 h-8 rounded-full hover:bg-slate-100 text-slate-400 hover:text-slate-600 flex items-center justify-center cursor-pointer"
+                  >
+                    <X size={18} />
+                  </button>
+                </div>
+
+                <form onSubmit={handleSaveNotiSubmit} className="space-y-4">
+                  {/* Tiêu đề */}
+                  <div>
+                    <label className="block text-xs font-bold text-slate-700 mb-1">
+                      Tiêu đề thông báo <span className="text-rose-500">*</span>
+                    </label>
+                    <input
+                      type="text"
+                      required
+                      value={notiFormTitle}
+                      onChange={(e) => setNotiFormTitle(e.target.value)}
+                      placeholder="Ví dụ: Lịch thi và nộp đồ án tốt nghiệp K19.3..."
+                      className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2 text-xs sm:text-sm text-slate-800 focus:bg-white focus:border-blue-500 focus:outline-none"
+                    />
+                  </div>
+
+                  {/* Ngày & Màu sắc */}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-xs font-bold text-slate-700 mb-1">
+                        Ngày hiển thị
+                      </label>
+                      <input
+                        type="text"
+                        value={notiFormDate}
+                        onChange={(e) => setNotiFormDate(e.target.value)}
+                        placeholder="Ví dụ: 15/10/2026"
+                        className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2 text-xs sm:text-sm text-slate-800 focus:bg-white focus:border-blue-500 focus:outline-none"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-bold text-slate-700 mb-1">
+                        Màu chủ đạo
+                      </label>
+                      <select
+                        value={notiFormColor}
+                        onChange={(e) => setNotiFormColor(e.target.value as any)}
+                        className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2 text-xs sm:text-sm text-slate-800 focus:bg-white focus:border-blue-500 focus:outline-none"
+                      >
+                        <option value="blue">Xanh dương (Blue)</option>
+                        <option value="red">Đỏ (Red)</option>
+                        <option value="purple">Tím (Purple)</option>
+                        <option value="orange">Cam (Orange)</option>
+                        <option value="green">Xanh lá (Green)</option>
+                      </select>
+                    </div>
+                  </div>
+
+                  {/* Link tài liệu */}
+                  <div>
+                    <label className="block text-xs font-bold text-slate-700 mb-1">
+                      Liên kết tài liệu gốc (URL)
+                    </label>
+                    <input
+                      type="url"
+                      value={notiFormUrl}
+                      onChange={(e) => setNotiFormUrl(e.target.value)}
+                      placeholder="https://docs.google.com/... (tùy chọn)"
+                      className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2 text-xs sm:text-sm text-slate-800 focus:bg-white focus:border-blue-500 focus:outline-none"
+                    />
+                  </div>
+
+                  {/* Nội dung chi tiết */}
+                  <div>
+                    <label className="block text-xs font-bold text-slate-700 mb-1">
+                      Nội dung chi tiết
+                    </label>
+                    <textarea
+                      rows={3}
+                      value={notiFormContent}
+                      onChange={(e) => setNotiFormContent(e.target.value)}
+                      placeholder="Nhập nội dung thông báo hoặc hướng dẫn cho sinh viên / giảng viên..."
+                      className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 text-xs sm:text-sm text-slate-800 focus:bg-white focus:border-blue-500 focus:outline-none"
+                    />
+                  </div>
+
+                  {/* Checkbox Quan trọng */}
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="checkbox"
+                      id="notiImportant"
+                      checked={notiFormIsImportant}
+                      onChange={(e) => setNotiFormIsImportant(e.target.checked)}
+                      className="w-4 h-4 text-blue-600 rounded-sm border-slate-300 focus:ring-blue-500"
+                    />
+                    <label htmlFor="notiImportant" className="text-xs font-semibold text-slate-700 cursor-pointer">
+                      Ghim thông báo quan trọng (hiển thị nổi bật)
+                    </label>
+                  </div>
+
+                  {/* PHÂN CÔNG NGƯỜI PHỤ TRÁCH (Assigned To) */}
+                  <div className="p-3.5 bg-blue-50/50 rounded-2xl border border-blue-100 space-y-2.5">
+                    <label className="block text-xs font-bold text-blue-900 flex items-center gap-1.5">
+                      <Users size={14} className="text-blue-600" />
+                      <span>Phân công người phụ trách nhiệm vụ:</span>
+                    </label>
+                    <p className="text-[11px] text-blue-700">
+                      Chỉ những người được giao hoặc Super Admin mới có quyền đánh dấu hoàn thành checklist.
+                    </p>
+
+                    {/* Danh sách Admin gợi ý */}
+                    {adminUsers.length > 0 && (
+                      <div className="flex flex-wrap gap-1.5 pt-1">
+                        {adminUsers.map((u) => {
+                          const isAssigned = notiFormAssignedTo.includes(u.email.toLowerCase().trim());
+                          return (
+                            <button
+                              type="button"
+                              key={u.email}
+                              onClick={() => handleToggleAssignee(u.email)}
+                              className={`text-[11px] px-2.5 py-1 rounded-xl font-medium border transition-colors cursor-pointer flex items-center gap-1 ${
+                                isAssigned
+                                  ? 'bg-blue-600 border-blue-600 text-white shadow-xs'
+                                  : 'bg-white border-blue-200 text-blue-800 hover:bg-blue-100/50'
+                              }`}
+                            >
+                              <UserCheck size={12} />
+                              <span>{u.name || u.email.split('@')[0]} ({u.email.split('@')[0]})</span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    )}
+
+                    {/* Thêm email tùy chọn */}
+                    <div className="flex items-center gap-2 pt-1">
+                      <input
+                        type="email"
+                        value={customAssigneeEmail}
+                        onChange={(e) => setCustomAssigneeEmail(e.target.value)}
+                        placeholder="Thêm email khác: canbo@fpt.edu.vn"
+                        className="flex-1 bg-white border border-blue-200 rounded-xl px-3 py-1.5 text-xs text-slate-800 focus:outline-none focus:border-blue-500"
+                      />
+                      <button
+                        type="button"
+                        onClick={handleAddAssigneeEmail}
+                        className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-semibold cursor-pointer"
+                      >
+                        Thêm
+                      </button>
+                    </div>
+
+                    {/* Danh sách đã chọn */}
+                    {notiFormAssignedTo.length > 0 && (
+                      <div className="flex flex-wrap gap-1 pt-1">
+                        {notiFormAssignedTo.map((em) => (
+                          <span
+                            key={em}
+                            className="inline-flex items-center gap-1 text-[11px] bg-white border border-blue-300 text-blue-900 px-2 py-0.5 rounded-lg"
+                          >
+                            <span>{em}</span>
+                            <button
+                              type="button"
+                              onClick={() => handleToggleAssignee(em)}
+                              className="text-slate-400 hover:text-rose-600 cursor-pointer"
+                            >
+                              <X size={12} />
+                            </button>
+                          </span>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* THIẾT LẬP CHECKLIST CÔNG VIỆC */}
+                  <div className="p-3.5 bg-slate-50 rounded-2xl border border-slate-200 space-y-2.5">
+                    <label className="block text-xs font-bold text-slate-700 flex items-center gap-1.5">
+                      <CheckCircle2 size={14} className="text-emerald-600" />
+                      <span>Checklist các đầu việc cần làm:</span>
+                    </label>
+
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="text"
+                        value={newChecklistText}
+                        onChange={(e) => setNewChecklistText(e.target.value)}
+                        placeholder="Ví dụ: Kiểm tra danh sách lớp, gửi thông báo qua Zalo..."
+                        className="flex-1 bg-white border border-slate-200 rounded-xl px-3 py-1.5 text-xs text-slate-800 focus:outline-none focus:border-blue-500"
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') {
+                            e.preventDefault();
+                            handleAddChecklistItem();
+                          }
+                        }}
+                      />
+                      <button
+                        type="button"
+                        onClick={handleAddChecklistItem}
+                        className="px-3 py-1.5 bg-slate-800 hover:bg-slate-900 text-white rounded-xl text-xs font-semibold cursor-pointer"
+                      >
+                        Thêm việc
+                      </button>
+                    </div>
+
+                    {notiFormChecklist.length > 0 && (
+                      <div className="space-y-1.5 pt-1">
+                        {notiFormChecklist.map((c, i) => (
+                          <div
+                            key={c.id}
+                            className="flex items-center justify-between gap-2 p-2 bg-white rounded-xl border border-slate-200 text-xs text-slate-700"
+                          >
+                            <span className="flex items-center gap-2 flex-1">
+                              <span className="text-[11px] font-bold text-slate-400">{i + 1}.</span>
+                              <span className={c.completed ? 'line-through text-slate-400' : ''}>{c.text}</span>
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => handleRemoveChecklistItem(c.id)}
+                              className="text-slate-400 hover:text-rose-600 cursor-pointer p-0.5"
+                            >
+                              <X size={14} />
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+
+                  {notiErrorMsg && (
+                    <div className="p-3 bg-rose-50 border border-rose-200 rounded-xl text-rose-800 text-xs">
+                      {notiErrorMsg}
+                    </div>
+                  )}
+
+                  {notiSuccessMsg && (
+                    <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-xl text-emerald-800 text-xs">
+                      {notiSuccessMsg}
+                    </div>
+                  )}
+
+                  {/* Submit buttons */}
+                  <div className="flex items-center justify-end gap-2.5 pt-2 border-t border-slate-100">
+                    <button
+                      type="button"
+                      onClick={() => setIsNotiModalOpen(false)}
+                      className="px-4 py-2 rounded-xl text-xs font-semibold text-slate-600 hover:bg-slate-100 cursor-pointer"
+                    >
+                      Hủy
+                    </button>
+                    <button
+                      type="submit"
+                      disabled={isSavingNoti}
+                      className="px-5 py-2 rounded-xl text-xs font-bold bg-[#0284C7] hover:bg-[#0369A1] text-white shadow-xs flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+                    >
+                      {isSavingNoti ? <RefreshCw size={14} className="animate-spin" /> : <Check size={14} />}
+                      <span>{isSavingNoti ? 'Đang lưu...' : (editingNoti ? 'Lưu Thay Đổi' : 'Tạo Thông Báo')}</span>
+                    </button>
+                  </div>
+                </form>
+              </div>
+            </div>
+          )}
           {adminTab === 'tickets' && (
             <div className="bg-white rounded-3xl p-6 border border-slate-200 shadow-xs space-y-4">
               <div className="flex items-center justify-between pb-3 border-b border-slate-100">

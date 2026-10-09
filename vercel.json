@@ -33,7 +33,7 @@
   ],
   "rewrites": [
     {
-      "source": "/((?!assets/|favicon\\.(?:ico|png|svg)|apple-touch-icon\\.png|public/).*)",
+      "source": "/((?!.*\\.[\\w]+$).*)",
       "destination": "/index.html"
     }
   ]

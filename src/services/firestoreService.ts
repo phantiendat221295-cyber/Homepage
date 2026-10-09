@@ -350,6 +350,33 @@ export async function savePortalConfigToFirestore(config: GoogleSheetsConfig): P
 }
 
 /**
+ * Lắng nghe danh sách thông báo theo thời gian thực (Realtime onSnapshot)
+ * Công khai cho tất cả người dùng xem
+ */
+export function subscribeNotifications(
+  onUpdate: (notis: NotificationItem[]) => void,
+  onError?: (err: any) => void
+): () => void {
+  const colRef = collection(db, NOTIFICATIONS_COLLECTION);
+  return onSnapshot(
+    colRef,
+    (snapshot) => {
+      const items: NotificationItem[] = [];
+      snapshot.forEach((snap) => {
+        items.push({ id: snap.id, ...(snap.data() as Omit<NotificationItem, 'id'>) });
+      });
+      // Sắp xếp thông báo mới nhất lên đầu
+      items.sort((a, b) => new Date(b.date || b.updatedAt || 0).getTime() - new Date(a.date || a.updatedAt || 0).getTime());
+      onUpdate(items);
+    },
+    (error) => {
+      handleFirestoreError(error, OperationType.GET, NOTIFICATIONS_COLLECTION);
+      if (onError) onError(error);
+    }
+  );
+}
+
+/**
  * Lấy danh sách thông báo từ Firestore
  */
 export async function getNotificationsFromFirestore(): Promise<NotificationItem[]> {
@@ -360,10 +387,59 @@ export async function getNotificationsFromFirestore(): Promise<NotificationItem[
     snapshot.forEach((snap) => {
       items.push({ id: snap.id, ...(snap.data() as Omit<NotificationItem, 'id'>) });
     });
-    return items;
+    return items.sort((a, b) => new Date(b.date || b.updatedAt || 0).getTime() - new Date(a.date || a.updatedAt || 0).getTime());
   } catch (error) {
     handleFirestoreError(error, OperationType.LIST, NOTIFICATIONS_COLLECTION);
     return [];
+  }
+}
+
+/**
+ * Lưu 1 thông báo lên Firestore (Thêm mới hoặc Cập nhật)
+ */
+export async function saveNotificationToFirestore(item: NotificationItem): Promise<void> {
+  const docRef = doc(db, NOTIFICATIONS_COLLECTION, item.id);
+  const dataToSave = sanitizeData({
+    ...item,
+    updatedAt: new Date().toISOString()
+  });
+  try {
+    await setDoc(docRef, dataToSave, { merge: true });
+  } catch (error) {
+    handleFirestoreError(error, OperationType.WRITE, `${NOTIFICATIONS_COLLECTION}/${item.id}`);
+    throw error;
+  }
+}
+
+/**
+ * Cập nhật checklist của thông báo (Dành cho người được giao hoặc Admin)
+ */
+export async function updateNotificationChecklistInFirestore(
+  id: string,
+  checklist: any[]
+): Promise<void> {
+  const docRef = doc(db, NOTIFICATIONS_COLLECTION, id);
+  try {
+    await updateDoc(docRef, {
+      checklist: checklist.map((c) => sanitizeData(c)),
+      updatedAt: new Date().toISOString()
+    });
+  } catch (error) {
+    handleFirestoreError(error, OperationType.UPDATE, `${NOTIFICATIONS_COLLECTION}/${id}`);
+    throw error;
+  }
+}
+
+/**
+ * Xóa 1 thông báo khỏi Firestore
+ */
+export async function deleteNotificationFromFirestore(id: string): Promise<void> {
+  const docRef = doc(db, NOTIFICATIONS_COLLECTION, id);
+  try {
+    await deleteDoc(docRef);
+  } catch (error) {
+    handleFirestoreError(error, OperationType.DELETE, `${NOTIFICATIONS_COLLECTION}/${id}`);
+    throw error;
   }
 }
 
@@ -381,6 +457,35 @@ export async function saveNotificationsToFirestore(notis: NotificationItem[]): P
   } catch (error) {
     handleFirestoreError(error, OperationType.WRITE, NOTIFICATIONS_COLLECTION);
     throw error;
+  }
+}
+
+/**
+ * Khởi tạo dữ liệu mẫu thông báo lên Firestore nếu collection còn trống
+ */
+export async function seedInitialNotificationsIfEmpty(
+  defaultNotis: NotificationItem[]
+): Promise<NotificationItem[]> {
+  try {
+    const existing = await getNotificationsFromFirestore();
+    if (existing && existing.length > 0) {
+      return existing;
+    }
+
+    if (!auth.currentUser) {
+      return defaultNotis;
+    }
+
+    const batch = writeBatch(db);
+    defaultNotis.forEach((item) => {
+      const docRef = doc(db, NOTIFICATIONS_COLLECTION, item.id);
+      batch.set(docRef, sanitizeData({ ...item, updatedAt: new Date().toISOString() }));
+    });
+    await batch.commit();
+    return defaultNotis;
+  } catch (error) {
+    handleFirestoreError(error, OperationType.WRITE, NOTIFICATIONS_COLLECTION);
+    return defaultNotis;
   }
 }
 

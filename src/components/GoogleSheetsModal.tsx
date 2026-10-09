@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
-import { X, ExternalLink, Check, RefreshCw, FileSpreadsheet, AlertCircle, Copy, Download, KeyRound, ShieldAlert, Lock } from 'lucide-react';
-import { GoogleSheetsConfig } from '../types';
+import { X, ExternalLink, Check, RefreshCw, FileSpreadsheet, AlertCircle, Copy, Download, KeyRound, ShieldAlert, Lock, Code, ListFilter, CheckCircle2, History } from 'lucide-react';
+import { GoogleSheetsConfig, SyncLogEntry } from '../types';
 import { DEFAULT_GOOGLE_CLIENT_ID } from '../services/googleAuthService';
 
 interface GoogleSheetsModalProps {
@@ -14,6 +14,10 @@ interface GoogleSheetsModalProps {
   totalApps: number;
   totalNotis: number;
   syncError?: string;
+  onManualSyncFromSheets?: () => Promise<void>;
+  isManualSyncing?: boolean;
+  syncLogs?: SyncLogEntry[];
+  canManageSync?: boolean;
 }
 
 export const GoogleSheetsModal: React.FC<GoogleSheetsModalProps> = ({
@@ -26,7 +30,11 @@ export const GoogleSheetsModal: React.FC<GoogleSheetsModalProps> = ({
   lastSynced,
   totalApps,
   totalNotis,
-  syncError
+  syncError,
+  onManualSyncFromSheets,
+  isManualSyncing = false,
+  syncLogs = [],
+  canManageSync = false
 }) => {
   const [appsUrl, setAppsUrl] = useState(config.appsCsvUrl || '');
   const [notisUrl, setNotisUrl] = useState(config.notificationsCsvUrl || '');
@@ -160,17 +168,53 @@ export const GoogleSheetsModal: React.FC<GoogleSheetsModalProps> = ({
             </button>
           </div>
 
+          {/* CHẾ ĐỘ 2: ĐỒNG BỘ BỔ SUNG TỪ GOOGLE SHEETS VỀ WEB */}
+          <div className="p-4 sm:p-5 rounded-2xl border-2 border-blue-200 bg-gradient-to-r from-blue-50/80 to-indigo-50/80 space-y-3 shadow-xs">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div>
+                <span className="text-xs sm:text-sm font-extrabold text-blue-950 flex items-center gap-1.5">
+                  <FileSpreadsheet size={16} className="text-blue-600" />
+                  <span>CHẾ ĐỘ 2: ĐỒNG BỘ BỔ SUNG TỪ GOOGLE SHEETS VỀ WEB</span>
+                </span>
+                <p className="text-[11px] text-blue-800/80 mt-1 leading-relaxed">
+                  Cơ chế an toàn cao cấp: Nạp thêm các tiện ích và thông báo mới từ Google Sheets mà <strong>TUYỆT ĐỐI KHÔNG làm mất hoặc ghi đè</strong> các dữ liệu, phân công và checklist đã tạo trên Web/Firestore.
+                </p>
+              </div>
+
+              {onManualSyncFromSheets && (
+                <button
+                  type="button"
+                  onClick={onManualSyncFromSheets}
+                  disabled={isManualSyncing || isSyncing}
+                  className="px-4 py-2.5 rounded-xl font-bold text-xs sm:text-sm bg-[#0284C7] hover:bg-[#0369A1] text-white shadow-md flex items-center justify-center gap-2 transition-all cursor-pointer disabled:opacity-50 shrink-0"
+                >
+                  {isManualSyncing ? (
+                    <RefreshCw size={15} className="animate-spin" />
+                  ) : (
+                    <Download size={15} />
+                  )}
+                  <span>{isManualSyncing ? 'Đang đồng bộ an toàn...' : 'Đồng bộ bổ sung từ Google Sheets về web'}</span>
+                </button>
+              )}
+            </div>
+
+            <div className="flex items-center gap-2 pt-1 text-[11px] text-blue-700">
+              <CheckCircle2 size={13} className="text-emerald-600 shrink-0" />
+              <span>Bảo vệ toàn vẹn: Thông báo tạo trên Web & checklist người dùng được giữ nguyên 100%.</span>
+            </div>
+          </div>
+
           {/* LỰA CHỌN: CHẾ ĐỘ HOẠT ĐỘNG (CLOUD FIRESTORE VS GOOGLE SHEETS) */}
           <div className="p-4 rounded-2xl border border-slate-200 bg-slate-50 space-y-3">
             <div className="flex items-center justify-between">
               <div>
                 <span className="text-xs sm:text-sm font-bold text-slate-800">
-                  Chế độ đồng bộ Google Sheets:
+                  Tự động đồng bộ nền Google Sheets:
                 </span>
                 <p className="text-[11px] text-slate-500">
                   {enableGoogleSheetsSync
-                    ? 'Đang BẬT đồng bộ từ Google Sheets (dữ liệu sẽ được fetch từ link Sheets).'
-                    : 'Đang TẮT đồng bộ Google Sheets. Hệ thống chạy 100% trên Cloud Firestore (Khuyên dùng: siêu tốc, tự động lưu vĩnh viễn, không lo lỗi CORS).'}
+                    ? 'Đang BẬT đồng bộ nền. Dữ liệu từ Sheets sẽ được tự động rà soát.'
+                    : 'Đang TẮT đồng bộ nền. Hệ thống ưu tiên dữ liệu từ Cloud Firestore siêu tốc, không lo lỗi CORS.'}
                 </p>
               </div>
 
@@ -311,7 +355,7 @@ export const GoogleSheetsModal: React.FC<GoogleSheetsModalProps> = ({
             </p>
           </div>
 
-          {/* Actions download template */}
+          {/* Actions download template & Script code */}
           <div className="pt-2 flex flex-wrap gap-2">
             <button
               onClick={downloadSampleAppsCsv}
@@ -327,7 +371,151 @@ export const GoogleSheetsModal: React.FC<GoogleSheetsModalProps> = ({
               <Download size={13} />
               <span>Tải file CSV mẫu (Phân quyền Admin)</span>
             </button>
+            <button
+              type="button"
+              onClick={() => {
+                const gasCode = `function doPost(e) {
+  var lock = LockService.getScriptLock();
+  try {
+    lock.waitLock(15000);
+    var data = JSON.parse(e.postData.contents);
+    var action = data.action;
+    var ss = SpreadsheetApp.getActiveSpreadsheet();
+    var appsSheet = ss.getSheetByName('Apps') || ss.getSheets()[0];
+    var notiSheet = ss.getSheetByName('ThongBao');
+    if (!notiSheet) {
+      notiSheet = ss.insertSheet('ThongBao');
+      notiSheet.appendRow(['ID', 'Tiêu đề', 'Ngày', 'Nội dung', 'Link', 'Màu', 'Người phụ trách', 'Checklist']);
+    }
+
+    if (action === 'saveApp') {
+      var app = data.app;
+      var dataRange = appsSheet.getDataRange();
+      var values = dataRange.getValues();
+      var foundIndex = -1;
+      for (var i = 1; i < values.length; i++) {
+        if (values[i][0] === app.id || values[i][2] === app.url) {
+          foundIndex = i + 1;
+          break;
+        }
+      }
+      var rowData = [app.title || '', app.description || '', app.url || '', app.category || 'Quản lý đào tạo', app.icon || 'AppWindow', app.tag || 'webapp', app.colorTheme || 'blue'];
+      if (foundIndex > 0) {
+        appsSheet.getRange(foundIndex, 1, 1, rowData.length).setValues([rowData]);
+      } else {
+        appsSheet.appendRow(rowData);
+      }
+      return ContentService.createTextOutput(JSON.stringify({ status: 'success' })).setMimeType(ContentService.MimeType.JSON);
+    }
+
+    if (action === 'deleteApp') {
+      var appId = data.appId;
+      var dataRange = appsSheet.getDataRange();
+      var values = dataRange.getValues();
+      for (var i = 1; i < values.length; i++) {
+        if (values[i][0] === appId || values[i][2] === appId) {
+          appsSheet.deleteRow(i + 1);
+          break;
+        }
+      }
+      return ContentService.createTextOutput(JSON.stringify({ status: 'success' })).setMimeType(ContentService.MimeType.JSON);
+    }
+
+    if (action === 'saveNotification') {
+      var noti = data.notification;
+      var dataRange = notiSheet.getDataRange();
+      var values = dataRange.getValues();
+      var foundIndex = -1;
+      for (var i = 1; i < values.length; i++) {
+        if (values[i][0] === noti.id || values[i][1] === noti.title) {
+          foundIndex = i + 1;
+          break;
+        }
+      }
+      var assignedStr = Array.isArray(noti.assignedTo) ? noti.assignedTo.join(', ') : '';
+      var clSummary = Array.isArray(noti.checklist) ? noti.checklist.filter(function(c){return c.completed;}).length + '/' + noti.checklist.length + ' hoàn thành' : '';
+      var rowData = [noti.id || '', noti.title || '', noti.date || '', noti.content || '', noti.url || '', noti.color || 'blue', assignedStr, clSummary];
+      if (foundIndex > 0) {
+        notiSheet.getRange(foundIndex, 1, 1, rowData.length).setValues([rowData]);
+      } else {
+        notiSheet.appendRow(rowData);
+      }
+      return ContentService.createTextOutput(JSON.stringify({ status: 'success' })).setMimeType(ContentService.MimeType.JSON);
+    }
+
+    if (action === 'deleteNotification') {
+      var notiId = data.notificationId;
+      var dataRange = notiSheet.getDataRange();
+      var values = dataRange.getValues();
+      for (var i = 1; i < values.length; i++) {
+        if (values[i][0] === notiId || values[i][1] === notiId) {
+          notiSheet.deleteRow(i + 1);
+          break;
+        }
+      }
+      return ContentService.createTextOutput(JSON.stringify({ status: 'success' })).setMimeType(ContentService.MimeType.JSON);
+    }
+
+    if (action === 'updateChecklist') {
+      var notiId = data.notificationId;
+      var checklist = data.checklist;
+      var dataRange = notiSheet.getDataRange();
+      var values = dataRange.getValues();
+      for (var i = 1; i < values.length; i++) {
+        if (values[i][0] === notiId || values[i][1] === notiId) {
+          var completed = Array.isArray(checklist) ? checklist.filter(function(c){return c.completed;}).length : 0;
+          var total = Array.isArray(checklist) ? checklist.length : 0;
+          notiSheet.getRange(i + 1, 8).setValue(completed + '/' + total + ' hoàn thành');
+          break;
+        }
+      }
+      return ContentService.createTextOutput(JSON.stringify({ status: 'success' })).setMimeType(ContentService.MimeType.JSON);
+    }
+
+    return ContentService.createTextOutput(JSON.stringify({ status: 'unknown_action' })).setMimeType(ContentService.MimeType.JSON);
+  } catch(err) {
+    return ContentService.createTextOutput(JSON.stringify({ status: 'error', error: err.toString() })).setMimeType(ContentService.MimeType.JSON);
+  } finally {
+    lock.releaseLock();
+  }
+}`;
+                navigator.clipboard.writeText(gasCode);
+                alert('Đã sao chép mã nguồn Google Apps Script (hỗ trợ Apps, Thông báo & Checklist)! Dán vào Extensions > Apps Script trên Google Sheets.');
+              }}
+              className="text-xs bg-emerald-50 hover:bg-emerald-100 text-emerald-800 px-3 py-1.5 rounded-lg font-medium flex items-center gap-1.5 cursor-pointer border border-emerald-200"
+            >
+              <Code size={13} />
+              <span>Copy Code Google Apps Script (Apps + Thông báo)</span>
+            </button>
           </div>
+
+          {/* NHẬT KÝ ĐỒNG BỘ (SYNC LOGS) */}
+          {syncLogs && syncLogs.length > 0 && (
+            <div className="pt-3 border-t border-slate-100 space-y-2">
+              <div className="flex items-center justify-between text-xs font-bold text-slate-700">
+                <span className="flex items-center gap-1.5">
+                  <History size={14} className="text-slate-500" />
+                  <span>Nhật ký đồng bộ gần nhất:</span>
+                </span>
+                <span className="text-[10px] text-slate-400 font-normal">
+                  Lưu trữ cục bộ
+                </span>
+              </div>
+              <div className="max-h-36 overflow-y-auto space-y-1.5 text-[11px] bg-slate-50 p-2.5 rounded-xl border border-slate-200">
+                {syncLogs.slice(0, 5).map((log: SyncLogEntry) => (
+                  <div key={log.id} className="flex items-start justify-between gap-2 border-b border-slate-100 pb-1 last:border-0 last:pb-0">
+                    <div>
+                      <span className={`font-semibold ${log.status === 'success' ? 'text-emerald-700' : 'text-rose-700'}`}>
+                        {log.message}
+                      </span>
+                      {log.details && <span className="text-slate-500 ml-1">({log.details})</span>}
+                    </div>
+                    <span className="text-[10px] text-slate-400 shrink-0">{log.timestamp}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Footer */}

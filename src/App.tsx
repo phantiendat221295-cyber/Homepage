@@ -11,7 +11,7 @@ import { GuideModal } from './components/GuideModal';
 import { EditAppModal } from './components/EditAppModal';
 import { RoleManagementView } from './components/RoleManagementView';
 import { Footer } from './components/Footer';
-import { WebAppItem, NotificationItem, QuickToolItem, GoogleSheetsConfig, AdminAccount, SupportTicket } from './types';
+import { WebAppItem, NotificationItem, QuickToolItem, GoogleSheetsConfig, AdminAccount, SupportTicket, SyncLogEntry, ChecklistItem } from './types';
 import { DEFAULT_APPS, DEFAULT_NOTIFICATIONS, DEFAULT_QUICK_TOOLS } from './data/defaultData';
 import {
   getStoredConfig,
@@ -23,7 +23,11 @@ import {
   getStoredTickets,
   saveSupportTicket,
   updateTicketStatus,
-  pushToGasWebhook
+  pushToGasWebhook,
+  mergeAppsSafely,
+  mergeNotificationsSafely,
+  getStoredSyncLogs,
+  addSyncLog
 } from './services/sheetsService';
 import {
   subscribeApps,
@@ -48,7 +52,12 @@ import {
   checkIsAdmin,
   SYSTEM_SUPER_ADMINS,
   resetDefaultAdminsToFirestore,
-  DEFAULT_ADMIN_USERS
+  DEFAULT_ADMIN_USERS,
+  subscribeNotifications,
+  saveNotificationToFirestore,
+  deleteNotificationFromFirestore,
+  updateNotificationChecklistInFirestore,
+  seedInitialNotificationsIfEmpty
 } from './services/firestoreService';
 import { auth } from './services/firebase';
 import {
@@ -157,6 +166,8 @@ export default function App() {
   // Sheet config & Sync state
   const [sheetConfig, setSheetConfig] = useState<GoogleSheetsConfig>(getStoredConfig);
   const [isSyncing, setIsSyncing] = useState(false);
+  const [isManualSyncing, setIsManualSyncing] = useState(false);
+  const [syncLogs, setSyncLogs] = useState<SyncLogEntry[]>(getStoredSyncLogs);
   const [lastSyncedTime, setLastSyncedTime] = useState<string | undefined>(sheetConfig.lastSynced);
   const [syncError, setSyncError] = useState<string | null>(null);
   const [deletedAppIds, setDeletedAppIds] = useState<string[]>([]);
@@ -192,20 +203,18 @@ export default function App() {
       const appsUrl = configToUse.appsCsvUrl || DEFAULT_SHEET_CONFIG.appsCsvUrl;
       const notisUrl = configToUse.notificationsCsvUrl || DEFAULT_SHEET_CONFIG.notificationsCsvUrl;
 
-      // 1. Fetch Apps từ Sheets và đồng bộ trực tiếp lên Firestore
+      // 1. Fetch Apps từ Sheets và merge an toàn không mất dữ liệu web
       if (appsUrl) {
         try {
           const fetchedApps = await fetchAppsFromCsv(appsUrl);
           if (fetchedApps && fetchedApps.length > 0) {
-            // Lưu các app từ Google Sheets lên Firestore
-            for (const item of fetchedApps) {
-              await saveAppToFirestore(item).catch(() => null);
-            }
-            setApps(fetchedApps);
+            const { merged, addedCount } = mergeAppsSafely(apps, fetchedApps);
+            setApps(merged);
             try {
-              localStorage.setItem('fpt_portal_cached_apps', JSON.stringify(fetchedApps));
-            } catch {
-              // ignore
+              localStorage.setItem('fpt_portal_cached_apps', JSON.stringify(merged));
+            } catch {}
+            for (const item of merged) {
+              await saveAppToFirestore(item).catch(() => null);
             }
           }
         } catch (err: any) {
@@ -217,16 +226,18 @@ export default function App() {
         }
       }
 
-      // 2. Fetch Notifications (Sơ kết đào tạo)
+      // 2. Fetch Notifications và merge an toàn (Bảo toàn 100% thông báo, phân công và checklist đã tạo trên Web)
       if (notisUrl) {
         try {
           const fetchedNotis = await fetchNotificationsFromCsv(notisUrl);
           if (fetchedNotis && fetchedNotis.length > 0) {
-            setNotifications(fetchedNotis);
+            const { merged, addedCount } = mergeNotificationsSafely(notifications, fetchedNotis);
+            setNotifications(merged);
             try {
-              localStorage.setItem('fpt_portal_cached_notis', JSON.stringify(fetchedNotis));
-            } catch {
-              // ignore
+              localStorage.setItem('fpt_portal_cached_notis', JSON.stringify(merged));
+            } catch {}
+            for (const item of merged) {
+              await saveNotificationToFirestore(item).catch(() => null);
             }
           }
         } catch (err: any) {
@@ -258,12 +269,88 @@ export default function App() {
         setSheetConfig(updatedConfig);
         saveStoredConfig(updatedConfig);
         await savePortalConfigToFirestore(updatedConfig).catch(() => null);
-        showToast('Đồng bộ dữ liệu từ Google Sheets & đã lưu vào Firestore!');
+        setSyncLogs(addSyncLog({
+          action: 'auto_push_app',
+          status: 'success',
+          message: 'Tự động đồng bộ từ Google Sheets thành công',
+          details: 'Dữ liệu web được bảo toàn nguyên vẹn'
+        }));
+        showToast('Đồng bộ dữ liệu từ Google Sheets & đã lưu vào Firestore an toàn!');
       }
     } catch (err) {
       console.error('Lỗi khi đồng bộ Google Sheets:', err);
     } finally {
       setIsSyncing(false);
+    }
+  };
+
+  // CHẾ ĐỘ 2: ĐỒNG BỘ BỔ SUNG TỪ GOOGLE SHEETS VỀ WEB (Admin chủ động bấm)
+  const handleManualSyncFromSheets = async () => {
+    setIsManualSyncing(true);
+    setSyncError(null);
+    try {
+      const appsUrl = sheetConfig.appsCsvUrl || DEFAULT_SHEET_CONFIG.appsCsvUrl;
+      const notisUrl = sheetConfig.notificationsCsvUrl || DEFAULT_SHEET_CONFIG.notificationsCsvUrl;
+      let addedApps = 0;
+      let addedNotis = 0;
+
+      // 1. Fetch và Merge Apps an toàn
+      if (appsUrl) {
+        const fetchedApps = await fetchAppsFromCsv(appsUrl);
+        if (fetchedApps && fetchedApps.length > 0) {
+          const { merged, addedCount } = mergeAppsSafely(apps, fetchedApps);
+          addedApps = addedCount;
+          setApps(merged);
+          try {
+            localStorage.setItem('fpt_portal_cached_apps', JSON.stringify(merged));
+          } catch {}
+          for (const item of merged) {
+            await saveAppToFirestore(item).catch(() => null);
+          }
+        }
+      }
+
+      // 2. Fetch và Merge Notifications an toàn (Bảo toàn 100% thông báo, phân công và checklist đã tạo trên Web)
+      if (notisUrl) {
+        const fetchedNotis = await fetchNotificationsFromCsv(notisUrl);
+        if (fetchedNotis && fetchedNotis.length > 0) {
+          const { merged, addedCount } = mergeNotificationsSafely(notifications, fetchedNotis);
+          addedNotis = addedCount;
+          setNotifications(merged);
+          try {
+            localStorage.setItem('fpt_portal_cached_notis', JSON.stringify(merged));
+          } catch {}
+          for (const item of merged) {
+            await saveNotificationToFirestore(item).catch(() => null);
+          }
+        }
+      }
+
+      const timeStr =
+        new Date().toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' }) +
+        ' ' +
+        new Date().toLocaleDateString('vi-VN');
+      setLastSyncedTime(timeStr);
+      setSyncLogs(addSyncLog({
+        action: 'manual_merge',
+        status: 'success',
+        message: 'Đồng bộ bổ sung từ Google Sheets thành công',
+        details: `+${addedApps} tiện ích mới, +${addedNotis} thông báo mới, bảo toàn dữ liệu web`
+      }));
+      showToast(`Đồng bộ bổ sung thành công (+${addedApps} tiện ích, +${addedNotis} thông báo mới)! Toàn bộ dữ liệu web được bảo toàn.`);
+    } catch (err: any) {
+      console.error('Lỗi khi đồng bộ bổ sung từ Sheets:', err);
+      const msg = err.message || 'Lỗi đồng bộ từ Google Sheets';
+      setSyncError(msg);
+      setSyncLogs(addSyncLog({
+        action: 'manual_merge',
+        status: 'failed',
+        message: 'Đồng bộ bổ sung thất bại',
+        details: msg
+      }));
+      showToast(`Lỗi đồng bộ bổ sung: ${msg}`);
+    } finally {
+      setIsManualSyncing(false);
     }
   };
 
@@ -326,6 +413,21 @@ export default function App() {
       console.warn('Lỗi lắng nghe Firestore apps:', err);
     });
 
+    // Lắng nghe Thông báo theo thời gian thực từ Firestore (Công khai cho mọi người)
+    const unsubscribeNotis = subscribeNotifications(async (firestoreNotis) => {
+      if (firestoreNotis && firestoreNotis.length > 0) {
+        setNotifications(firestoreNotis);
+        try {
+          localStorage.setItem('fpt_portal_cached_notis', JSON.stringify(firestoreNotis));
+        } catch {}
+      } else {
+        const seeded = await seedInitialNotificationsIfEmpty(DEFAULT_NOTIFICATIONS);
+        setNotifications(seeded);
+      }
+    }, (err) => {
+      console.warn('Lỗi lắng nghe Firestore notis:', err);
+    });
+
     // Lấy cấu hình hệ thống đã lưu trên Firestore (Công khai)
     getPortalConfigFromFirestore().then((cloudConfig) => {
       if (cloudConfig && (cloudConfig.appsCsvUrl || cloudConfig.notificationsCsvUrl)) {
@@ -369,6 +471,7 @@ export default function App() {
 
     return () => {
       unsubscribeApps();
+      unsubscribeNotis();
       unsubscribeAuth();
     };
   }, []);
@@ -775,6 +878,107 @@ export default function App() {
     }
   };
 
+  // CHỨC NĂNG: QUẢN LÝ THÔNG BÁO & PHÂN CÔNG THEO NGƯỜI DÙNG
+  const handleSaveNotification = async (item: NotificationItem) => {
+    // 1. Cập nhật state UI ngay lập tức
+    setNotifications((prev) => {
+      const exists = prev.some((n) => n.id === item.id);
+      const next = exists ? prev.map((n) => (n.id === item.id ? item : n)) : [item, ...prev];
+      try {
+        localStorage.setItem('fpt_portal_cached_notis', JSON.stringify(next));
+      } catch {}
+      return next;
+    });
+
+    // 2. Lưu trực tiếp lên Cloud Firestore
+    try {
+      await saveNotificationToFirestore(item);
+      showToast(`Đã lưu thông báo "${item.title}" lên Cloud Firestore!`);
+    } catch (err: any) {
+      console.error('Lỗi khi lưu thông báo Firestore:', err);
+      showToast(`Lỗi lưu Firestore: ${err?.message || 'Không thể lưu'}`);
+    }
+
+    // 3. Nếu cấu hình Webhook Google Apps Script, đồng bộ sang Sheet
+    if (sheetConfig.gasWebhookUrl) {
+      pushToGasWebhook(sheetConfig.gasWebhookUrl, { action: 'saveNotification', notification: item });
+    }
+  };
+
+  const handleDeleteNotification = async (id: string) => {
+    const target = notifications.find((n) => n.id === id);
+    setNotifications((prev) => {
+      const next = prev.filter((n) => n.id !== id);
+      try {
+        localStorage.setItem('fpt_portal_cached_notis', JSON.stringify(next));
+      } catch {}
+      return next;
+    });
+
+    try {
+      await deleteNotificationFromFirestore(id);
+      showToast(`Đã xóa thông báo "${target?.title || id}" khỏi Cloud Firestore!`);
+    } catch (err: any) {
+      console.error('Lỗi xóa thông báo Firestore:', err);
+      showToast(`Lỗi xóa Firestore: ${err?.message || 'Không thể xóa'}`);
+    }
+
+    if (sheetConfig.gasWebhookUrl) {
+      pushToGasWebhook(sheetConfig.gasWebhookUrl, { action: 'deleteNotification', notificationId: id });
+    }
+  };
+
+  const handleToggleChecklistItem = async (notificationId: string, itemId: string) => {
+    const targetNoti = notifications.find((n) => n.id === notificationId);
+    if (!targetNoti || !targetNoti.checklist) return;
+
+    const userEmail = currentAdminUser?.email || 'Admin';
+    const nextChecklist = targetNoti.checklist.map((c) => {
+      if (c.id === itemId) {
+        const nextCompleted = !c.completed;
+        return {
+          ...c,
+          completed: nextCompleted,
+          completedBy: nextCompleted ? userEmail : undefined,
+          completedAt: nextCompleted ? new Date().toISOString() : undefined
+        };
+      }
+      return c;
+    });
+
+    const updatedNoti: NotificationItem = {
+      ...targetNoti,
+      checklist: nextChecklist,
+      updatedAt: new Date().toISOString()
+    };
+
+    setNotifications((prev) =>
+      prev.map((n) => (n.id === notificationId ? updatedNoti : n))
+    );
+    try {
+      localStorage.setItem(
+        'fpt_portal_cached_notis',
+        JSON.stringify(notifications.map((n) => (n.id === notificationId ? updatedNoti : n)))
+      );
+    } catch {}
+
+    try {
+      await updateNotificationChecklistInFirestore(notificationId, nextChecklist);
+      showToast('Đã cập nhật trạng thái checklist công việc!');
+    } catch (err: any) {
+      console.error('Lỗi cập nhật checklist Firestore:', err);
+      throw err;
+    }
+
+    if (sheetConfig.gasWebhookUrl) {
+      pushToGasWebhook(sheetConfig.gasWebhookUrl, {
+        action: 'updateChecklist',
+        notificationId,
+        checklist: nextChecklist
+      });
+    }
+  };
+
   // Categories list
   const existingCategories = useMemo(() => {
     const defaultList = ['Quản lý đào tạo', 'Hỗ trợ giảng dạy', 'Tiện ích chung'];
@@ -936,6 +1140,13 @@ export default function App() {
               await savePortalConfigToFirestore(updated).catch(() => null);
               showToast('Đã lưu cấu hình Logo và tên phân hiệu thành công!');
             }}
+            notifications={notifications}
+            onSaveNotification={handleSaveNotification}
+            onDeleteNotification={handleDeleteNotification}
+            onToggleChecklistItem={handleToggleChecklistItem}
+            onManualSyncFromSheets={handleManualSyncFromSheets}
+            isManualSyncing={isManualSyncing}
+            syncLogs={syncLogs}
           />
         </main>
       ) : (
@@ -1154,11 +1365,17 @@ export default function App() {
         totalApps={apps.length}
         totalNotis={notifications.length}
         syncError={syncError || undefined}
+        onManualSyncFromSheets={handleManualSyncFromSheets}
+        isManualSyncing={isManualSyncing}
+        syncLogs={syncLogs}
+        canManageSync={currentRole === 'admin'}
       />
 
       <NotificationModal
         item={selectedNotification}
         onClose={() => setSelectedNotification(null)}
+        currentAdminUser={currentAdminUser}
+        onToggleChecklistItem={handleToggleChecklistItem}
       />
 
       <SupportModal

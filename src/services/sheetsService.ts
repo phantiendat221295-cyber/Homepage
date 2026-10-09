@@ -521,9 +521,17 @@ export const fetchPermissionsFromCsv = async (rawUrl?: string): Promise<AdminAcc
 };
 
 // 4. GOOGLE APPS SCRIPT WEBHOOK (Ghi dữ liệu 2 chiều trực tiếp vào Google Sheets nếu có)
+export type GasWebhookPayload =
+  | { action: 'saveApp'; app: WebAppItem }
+  | { action: 'deleteApp'; appId: string }
+  | { action: 'saveNotification'; notification: NotificationItem }
+  | { action: 'deleteNotification'; notificationId: string }
+  | { action: 'updateChecklist'; notificationId: string; checklist: any[] }
+  | { action: 'assignNotification'; notificationId: string; assignedTo: string[] };
+
 export const pushToGasWebhook = async (
   webhookUrl: string,
-  payload: { action: 'saveApp' | 'deleteApp'; app?: WebAppItem; appId?: string }
+  payload: GasWebhookPayload | { action: string; [key: string]: any }
 ): Promise<boolean> => {
   if (!webhookUrl || !webhookUrl.trim()) return false;
   try {
@@ -538,6 +546,166 @@ export const pushToGasWebhook = async (
     console.warn('Lỗi gọi GAS webhook:', err);
     return false;
   }
+};
+
+/**
+ * Merge tiện ích thông minh từ Google Sheets về Web:
+ * - KHÔNG ghi đè hoặc xóa các tiện ích được tạo trên web (isCustom === true)
+ * - Giữ nguyên toàn bộ tiện ích hiện có, chỉ nạp thêm tiện ích mới từ Sheet nếu chưa có
+ */
+export const mergeAppsSafely = (
+  existingApps: WebAppItem[],
+  sheetApps: WebAppItem[]
+): { merged: WebAppItem[]; addedCount: number; keptCount: number } => {
+  const mergedMap = new Map<string, WebAppItem>();
+
+  // 1. Nạp toàn bộ tiện ích hiện tại của Web/Firestore vào Map (nguồn chính)
+  existingApps.forEach((app) => {
+    mergedMap.set(app.id, app);
+  });
+
+  let addedCount = 0;
+  let keptCount = existingApps.length;
+
+  // 2. Duyệt qua tiện ích từ Sheet
+  sheetApps.forEach((sheetItem) => {
+    // Tìm xem đã có theo ID hoặc theo Title & URL chưa
+    const existingById = mergedMap.get(sheetItem.id);
+    const existingByContent = Array.from(mergedMap.values()).find(
+      (a) => a.title.trim().toLowerCase() === sheetItem.title.trim().toLowerCase() ||
+             (a.url.trim() === sheetItem.url.trim() && a.url !== '#' && a.url !== '')
+    );
+
+    if (existingById) {
+      // Nếu item đã có trên Web và là item custom, GIỮ NGUYÊN bản Web
+      if (existingById.isCustom) {
+        // Giữ nguyên web
+      } else {
+        // Cập nhật nhẹ thông tin từ Sheet nhưng giữ nguyên thuộc tính Web
+        mergedMap.set(sheetItem.id, {
+          ...sheetItem,
+          id: existingById.id,
+          updatedAt: new Date().toISOString()
+        });
+      }
+    } else if (existingByContent) {
+      // Đã có tiện ích tương tự trên Web -> giữ nguyên tiện ích web
+    } else {
+      // Tiện ích mới hoàn toàn từ Sheet -> Thêm vào danh sách
+      mergedMap.set(sheetItem.id, {
+        ...sheetItem,
+        updatedAt: new Date().toISOString()
+      });
+      addedCount++;
+    }
+  });
+
+  return {
+    merged: Array.from(mergedMap.values()),
+    addedCount,
+    keptCount
+  };
+};
+
+/**
+ * Merge thông báo thông minh từ Google Sheets về Web:
+ * - TUYỆT ĐỐI KHÔNG làm mất thông báo đã tạo trên Web/Firestore
+ * - Giữ nguyên danh sách người được phân công (assignedTo) và checklist đã tạo
+ * - Chỉ nạp thêm thông báo mới từ Sheet
+ */
+export const mergeNotificationsSafely = (
+  existingNotis: NotificationItem[],
+  sheetNotis: NotificationItem[]
+): { merged: NotificationItem[]; addedCount: number; keptCount: number } => {
+  const map = new Map<string, NotificationItem>();
+
+  // 1. Nạp toàn bộ thông báo hiện có trên Web/Firestore (Ưu tiên giữ checklist & assignedTo)
+  existingNotis.forEach((n) => {
+    map.set(n.id, n);
+  });
+
+  let addedCount = 0;
+  const keptCount = existingNotis.length;
+
+  // 2. Duyệt qua thông báo từ Sheet
+  sheetNotis.forEach((sheetItem) => {
+    const existingById = map.get(sheetItem.id);
+    const existingByTitleAndDate = Array.from(map.values()).find(
+      (n) => n.title.trim().toLowerCase() === sheetItem.title.trim().toLowerCase() &&
+             n.date.trim() === sheetItem.date.trim()
+    );
+
+    if (existingById) {
+      // Nếu đã có, giữ nguyên assignedTo và checklist của Web, chỉ cập nhật link/màu nếu cần
+      map.set(sheetItem.id, {
+        ...sheetItem,
+        assignedTo: existingById.assignedTo || sheetItem.assignedTo,
+        assignedNames: existingById.assignedNames || sheetItem.assignedNames,
+        checklist: existingById.checklist || sheetItem.checklist,
+        isCustom: existingById.isCustom,
+        updatedAt: new Date().toISOString()
+      });
+    } else if (existingByTitleAndDate) {
+      // Đã có thông báo trùng tiêu đề và ngày -> giữ nguyên bản web đã phân công
+    } else {
+      // Thông báo mới từ Sheet -> Nạp thêm
+      map.set(sheetItem.id, {
+        ...sheetItem,
+        updatedAt: new Date().toISOString()
+      });
+      addedCount++;
+    }
+  });
+
+  const merged = Array.from(map.values()).sort(
+    (a, b) => new Date(b.date || 0).getTime() - new Date(a.date || 0).getTime()
+  );
+
+  return {
+    merged,
+    addedCount,
+    keptCount
+  };
+};
+
+// ==========================================
+// NHẬT KÝ ĐỒNG BỘ (SYNC LOGS)
+// ==========================================
+const SYNC_LOGS_KEY = 'fpt_portal_sync_logs';
+
+export const getStoredSyncLogs = (): any[] => {
+  try {
+    const raw = localStorage.getItem(SYNC_LOGS_KEY);
+    if (raw) return JSON.parse(raw);
+  } catch {}
+  return [];
+};
+
+export const addSyncLog = (log: {
+  action: 'auto_push_app' | 'auto_push_noti' | 'manual_pull' | 'manual_merge' | 'gas_webhook';
+  status: 'success' | 'failed' | 'skipped';
+  message: string;
+  details?: string;
+}) => {
+  try {
+    const current = getStoredSyncLogs();
+    const newEntry = {
+      id: `log_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+      timestamp: new Date().toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit', second: '2-digit' }) + ' ' + new Date().toLocaleDateString('vi-VN'),
+      ...log
+    };
+    const updated = [newEntry, ...current].slice(0, 50); // Giữ tối đa 50 log mới nhất
+    localStorage.setItem(SYNC_LOGS_KEY, JSON.stringify(updated));
+    return updated;
+  } catch {
+    return [];
+  }
+};
+
+export const clearStoredSyncLogs = () => {
+  try {
+    localStorage.removeItem(SYNC_LOGS_KEY);
+  } catch {}
 };
 
 // 5. SUPPORT TICKETS MANAGEMENT
