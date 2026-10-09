@@ -185,6 +185,11 @@ export async function seedInitialAppsIfEmpty(defaultApps: WebAppItem[]): Promise
       return existing;
     }
 
+    // Chỉ Admin đã xác thực mới có quyền ghi dữ liệu apps ban đầu lên Firestore
+    if (!auth.currentUser) {
+      return defaultApps;
+    }
+
     const batch = writeBatch(db);
     defaultApps.forEach((item) => {
       const docRef = doc(db, APPS_COLLECTION, item.id);
@@ -802,7 +807,22 @@ export async function handleUserLoginAuthCheck(
     return { isAuthorizedAdmin: true, role: 'admin', account: superAcc };
   }
 
-  // 2. Đọc trực tiếp từ Cloud Firestore server (không dùng cache trình duyệt)
+  // 2. Nếu chưa đăng nhập Firebase Auth và không phải Super Admin vĩnh viễn,
+  // không gửi request đọc admin_users lên Firestore để tránh lỗi Missing or insufficient permissions.
+  if (!auth.currentUser) {
+    const defaultAcc: AdminAccount = {
+      email: cleanEmail,
+      name: profileName || cleanEmail.split('@')[0],
+      role: 'user',
+      status: 'revoked',
+      isSuperAdmin: false,
+      addedAt: new Date().toISOString(),
+      addedBy: 'Chưa đăng nhập'
+    };
+    return { isAuthorizedAdmin: false, role: 'user', account: defaultAcc };
+  }
+
+  // 3. Đọc trực tiếp từ Cloud Firestore server (không dùng cache trình duyệt)
   const userRef = doc(db, ADMINS_COLLECTION, cleanEmail);
   let userDocData: any = null;
 

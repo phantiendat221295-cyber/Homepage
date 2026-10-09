@@ -77,6 +77,7 @@ export default function App() {
   });
 
   const currentAdminUserRef = useRef<AdminAccount | null>(currentAdminUser);
+  const [authReadyUser, setAuthReadyUser] = useState<any>(() => auth.currentUser);
   useEffect(() => {
     currentAdminUserRef.current = currentAdminUser;
   }, [currentAdminUser]);
@@ -233,9 +234,9 @@ export default function App() {
         }
       }
 
-      // 3. Fetch Permissions CSV (YÊU CẦU 2: Không ghi đè role của user đã có trên Firestore)
+      // 3. Fetch Permissions CSV (Chỉ đồng bộ phân quyền khi người dùng đang có phiên Quản trị viên và đã xác thực)
       const permissionsUrl = configToUse.permissionsCsvUrl || DEFAULT_SHEET_CONFIG.permissionsCsvUrl;
-      if (permissionsUrl) {
+      if (permissionsUrl && currentRole === 'admin' && auth.currentUser) {
         try {
           const fetchedAccounts = await fetchPermissionsFromCsv(permissionsUrl);
           if (fetchedAccounts && fetchedAccounts.length > 0) {
@@ -334,6 +335,7 @@ export default function App() {
 
     // Lắng nghe trạng thái đăng nhập Firebase Authentication
     const unsubscribeAuth = onAuthStateChanged(auth, async (fbUser) => {
+      setAuthReadyUser(fbUser);
       if (fbUser && fbUser.email) {
         const cleanEmail = fbUser.email.toLowerCase().trim();
         const check = await handleUserLoginAuthCheck(cleanEmail, fbUser.displayName || undefined, fbUser.uid);
@@ -454,7 +456,7 @@ export default function App() {
       unsubscribeAdmins();
       clearInterval(adminCheckInterval);
     };
-  }, [currentRole]);
+  }, [currentRole, authReadyUser]);
 
   const handleSaveSheetConfig = async (newConfig: GoogleSheetsConfig) => {
     setSheetConfig(newConfig);
