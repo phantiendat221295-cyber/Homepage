@@ -8,8 +8,6 @@ import {
   deleteDoc,
   writeBatch,
   onSnapshot,
-  query,
-  orderBy,
   getDocFromServer
 } from 'firebase/firestore';
 import { db, auth } from './firebase';
@@ -78,7 +76,7 @@ function sanitizeData<T extends Record<string, any>>(data: T): Partial<T> {
 // Kiểm tra kết nối tới Firestore
 export async function testFirestoreConnection(): Promise<boolean> {
   try {
-    const testRef = doc(db, 'settings', '_connection_check');
+    const testRef = doc(db, 'settings', 'portal_config');
     const res = await getDocFromServer(testRef).catch(() => null);
     return res !== null;
   } catch {
@@ -177,7 +175,6 @@ export async function seedInitialAppsIfEmpty(defaultApps: WebAppItem[]): Promise
       return existing;
     }
 
-    // Nếu rỗng, nạp dữ liệu mặc định ban đầu theo batch
     const batch = writeBatch(db);
     defaultApps.forEach((item) => {
       const docRef = doc(db, APPS_COLLECTION, item.id);
@@ -208,7 +205,6 @@ export async function getTicketsFromFirestore(): Promise<SupportTicket[]> {
     snapshot.forEach((docSnap) => {
       items.push({ id: docSnap.id, ...(docSnap.data() as Omit<SupportTicket, 'id'>) });
     });
-    // Sắp xếp mới nhất lên đầu
     return items.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
   } catch (error) {
     handleFirestoreError(error, OperationType.LIST, TICKETS_COLLECTION);
@@ -363,11 +359,12 @@ export async function saveNotificationsToFirestore(notis: NotificationItem[]): P
     await batch.commit();
   } catch (error) {
     handleFirestoreError(error, OperationType.WRITE, NOTIFICATIONS_COLLECTION);
+    throw error;
   }
 }
 
 // ==========================================
-// 4. QUẢN LÝ PHÂN QUYỀN ADMIN (COLLECTION: settings -> portal_admins)
+// 4. QUẢN LÝ PHÂN QUYỀN ADMIN - DUY NHẤT COLLECTION admin_users
 // ==========================================
 
 export const ADMINS_COLLECTION = 'admin_users';
@@ -381,6 +378,7 @@ export const INITIAL_TEMPLATE_ADMINS: AdminAccount[] = [
     email: 'datpt60@fpt.edu.vn',
     name: 'Phan Tiến Đạt (Đào tạo)',
     role: 'admin',
+    status: 'active',
     isSuperAdmin: true,
     addedAt: '2025-01-01',
     addedBy: 'Hệ thống'
@@ -389,6 +387,7 @@ export const INITIAL_TEMPLATE_ADMINS: AdminAccount[] = [
     email: 'phantiendat221295@gmail.com',
     name: 'Phan Tiến Đạt',
     role: 'admin',
+    status: 'active',
     isSuperAdmin: true,
     addedAt: '2025-01-01',
     addedBy: 'Hệ thống'
@@ -397,6 +396,7 @@ export const INITIAL_TEMPLATE_ADMINS: AdminAccount[] = [
     email: 'thuanl2@fpt.edu.vn',
     name: 'Thuận (thuanl2)',
     role: 'admin',
+    status: 'active',
     isSuperAdmin: false,
     addedAt: '2025-01-01',
     addedBy: 'Hệ thống'
@@ -405,6 +405,7 @@ export const INITIAL_TEMPLATE_ADMINS: AdminAccount[] = [
     email: 'vylnu@fpt.edu.vn',
     name: 'Vỹ (vylnu)',
     role: 'admin',
+    status: 'active',
     isSuperAdmin: false,
     addedAt: '2025-01-01',
     addedBy: 'Hệ thống'
@@ -413,6 +414,7 @@ export const INITIAL_TEMPLATE_ADMINS: AdminAccount[] = [
     email: 'loiqt@fpt.edu.vn',
     name: 'Lợi (loiqt)',
     role: 'admin',
+    status: 'active',
     isSuperAdmin: false,
     addedAt: '2025-01-01',
     addedBy: 'Hệ thống'
@@ -421,6 +423,7 @@ export const INITIAL_TEMPLATE_ADMINS: AdminAccount[] = [
     email: 'duocdty2@fpt.edu.vn',
     name: 'Dược (duocdty2)',
     role: 'admin',
+    status: 'active',
     isSuperAdmin: false,
     addedAt: '2025-01-01',
     addedBy: 'Hệ thống'
@@ -429,6 +432,7 @@ export const INITIAL_TEMPLATE_ADMINS: AdminAccount[] = [
     email: 'dienvnn@fpt.edu.vn',
     name: 'Điền (dienvnn)',
     role: 'admin',
+    status: 'active',
     isSuperAdmin: false,
     addedAt: '2025-01-01',
     addedBy: 'Hệ thống'
@@ -437,6 +441,7 @@ export const INITIAL_TEMPLATE_ADMINS: AdminAccount[] = [
     email: 'thainh44@fpt.edu.vn',
     name: 'Thái (thainh44)',
     role: 'admin',
+    status: 'active',
     isSuperAdmin: false,
     addedAt: '2025-01-01',
     addedBy: 'Hệ thống'
@@ -445,14 +450,18 @@ export const INITIAL_TEMPLATE_ADMINS: AdminAccount[] = [
 
 export const DEFAULT_ADMIN_USERS = INITIAL_TEMPLATE_ADMINS;
 
+/**
+ * Định danh document chuẩn hóa: Email viết thường, loại bỏ khoảng trắng.
+ * Cho phép đối chiếu trực tiếp với request.auth.token.email trong Firestore Security Rules.
+ */
 export const getAdminDocId = (email: string) => {
-  return email.toLowerCase().trim().replace(/[^a-zA-Z0-9]/g, '_');
+  return email.toLowerCase().trim();
 };
 
 /**
  * Kiểm tra xem một email có quyền admin hay không.
  * CHỈ 2 Super Admin là vĩnh viễn trong code.
- * Tất cả các admin khác BẮT BUỘC phải còn tồn tại trong activeAdmins và có role là 'admin'.
+ * Tất cả các admin khác BẮT BUỘC phải có role là 'admin' VÀ status là 'active'.
  */
 export function checkIsAdmin(email: string, activeAdmins: AdminAccount[]): boolean {
   if (!email || !email.trim()) return false;
@@ -463,87 +472,101 @@ export function checkIsAdmin(email: string, activeAdmins: AdminAccount[]): boole
     return true;
   }
 
-  // 2. Các admin khác: Bắt buộc phải còn tồn tại trong danh sách activeAdmins và có role là admin
+  // 2. Các admin khác: Bắt buộc phải còn tồn tại trong danh sách activeAdmins với role: admin và status: active
   if (Array.isArray(activeAdmins)) {
     return activeAdmins.some(
-      (a) => a.email && a.email.toLowerCase().trim() === clean && a.role === 'admin'
+      (a) =>
+        a.email &&
+        a.email.toLowerCase().trim() === clean &&
+        a.role === 'admin' &&
+        a.status !== 'revoked'
     );
   }
 
   return false;
 }
 
-export const SETTINGS_ADMINS_DOC = 'portal_admins';
-
 /**
- * Lấy danh sách Người dùng & Quản trị viên từ Firestore
- * Đọc ưu tiên từ 'settings/portal_admins' và đồng bộ với collection 'admin_users'
+ * Lấy danh sách Người dùng & Quản trị viên TỪ MỘT NGUỒN DUY NHẤT: collection 'admin_users'
+ * Có cơ chế tự động chuyển đổi an toàn (migration) từ settings/portal_admins nếu collection mới còn trống.
  */
 export async function getAdminUsersFromFirestore(): Promise<AdminAccount[]> {
   const accountsMap = new Map<string, AdminAccount>();
 
-  // 1. Đọc TRƯỚC HẾT từ doc 'settings/portal_admins' (Luôn có quyền đọc trên Firestore)
-  try {
-    const docRef = doc(db, 'settings', SETTINGS_ADMINS_DOC);
-    const snap = await getDocFromServer(docRef).catch(() => getDoc(docRef));
-    if (snap.exists() && Array.isArray(snap.data()?.admins)) {
-      const list: AdminAccount[] = snap.data().admins;
-      list.forEach((a) => {
-        const email = (a.email || '').toLowerCase().trim();
-        if (email) {
-          accountsMap.set(email, {
-            ...a,
-            email,
-            role: (a.role === 'user' ? 'user' : 'admin') as 'admin' | 'user',
-            isSuperAdmin: SYSTEM_SUPER_ADMINS.includes(email) || Boolean(a.isSuperAdmin)
-          });
-        }
-      });
-    }
-  } catch (err) {
-    console.warn('Lỗi đọc settings/portal_admins doc:', err);
-  }
-
-  // 2. Đọc bổ sung từ collection 'admin_users'
   try {
     const colRef = collection(db, ADMINS_COLLECTION);
     const snap = await getDocs(colRef);
+
     snap.forEach((docSnap) => {
       const d = docSnap.data();
-      const email = (d.email || '').toLowerCase().trim();
-      if (email) {
-        const existing = accountsMap.get(email);
-        // NGUYÊN TẮC BẢO MẬT: Nếu ở bất kỳ nguồn nào role đã bị thu hồi về 'user', ưu tiên 'user'!
-        let determinedRole: 'admin' | 'user' = 'admin';
-        if (existing?.role === 'user' || d.role === 'user') {
-          determinedRole = 'user';
-        }
+      const rawEmail = (d.email || '').toLowerCase().trim();
+      if (rawEmail) {
+        const isSuper = SYSTEM_SUPER_ADMINS.includes(rawEmail) || Boolean(d.isSuperAdmin);
+        const status = d.status === 'revoked' || d.role === 'user' ? 'revoked' : 'active';
+        const role = status === 'revoked' ? 'user' : (d.role === 'admin' || isSuper ? 'admin' : 'user');
 
-        accountsMap.set(email, {
-          email,
-          name: d.name || existing?.name || email.split('@')[0],
-          role: determinedRole,
-          isSuperAdmin: SYSTEM_SUPER_ADMINS.includes(email) || Boolean(d.isSuperAdmin),
-          addedAt: d.addedAt || existing?.addedAt || '2025-01-01',
-          addedBy: d.addedBy || existing?.addedBy || 'Hệ thống',
-          lastLogin: d.lastLogin || existing?.lastLogin
+        accountsMap.set(rawEmail, {
+          email: rawEmail,
+          uid: d.uid,
+          name: d.name || rawEmail.split('@')[0],
+          role: isSuper ? 'admin' : role,
+          status: isSuper ? 'active' : status,
+          isSuperAdmin: isSuper,
+          addedAt: d.addedAt || '2025-01-01',
+          addedBy: d.addedBy || 'Hệ thống',
+          updatedAt: d.updatedAt,
+          updatedBy: d.updatedBy,
+          lastLogin: d.lastLogin
         });
       }
     });
+
+    // MIGRATION 1 LẦN: Nếu collection admin_users chưa có dữ liệu nào nhưng settings/portal_admins có:
+    if (accountsMap.size === 0) {
+      try {
+        const oldSettingsDoc = doc(db, 'settings', 'portal_admins');
+        const oldSnap = await getDoc(oldSettingsDoc);
+        if (oldSnap.exists() && Array.isArray(oldSnap.data()?.admins)) {
+          console.info('[Migration] Tự động sao lưu & chuyển đổi dữ liệu từ portal_admins sang admin_users...');
+          const oldList: AdminAccount[] = oldSnap.data()?.admins;
+          for (const item of oldList) {
+            const clean = (item.email || '').toLowerCase().trim();
+            if (clean) {
+              const isSuper = SYSTEM_SUPER_ADMINS.includes(clean);
+              const status = item.role === 'user' ? 'revoked' : 'active';
+              const migratedAcc: AdminAccount = {
+                ...item,
+                email: clean,
+                role: isSuper ? 'admin' : (status === 'revoked' ? 'user' : 'admin'),
+                status: isSuper ? 'active' : status,
+                isSuperAdmin: isSuper
+              };
+              accountsMap.set(clean, migratedAcc);
+              // Lưu vào document chuẩn theo email
+              await setDoc(doc(db, ADMINS_COLLECTION, clean), sanitizeData(migratedAcc), { merge: true }).catch(() => null);
+            }
+          }
+        }
+      } catch (migErr) {
+        console.warn('[Migration warning]:', migErr);
+      }
+    }
   } catch (err) {
-    // Không để lỗi permission denied của collection admin_users làm mất dữ liệu portal_admins
+    handleFirestoreError(err, OperationType.LIST, ADMINS_COLLECTION);
   }
 
-  // 3. Luôn đảm bảo 2 Super Admin có mặt với role admin
+  // 3. Luôn đảm bảo 2 Super Admin khởi tạo luôn có mặt với role admin và status active
   SYSTEM_SUPER_ADMINS.forEach((email) => {
     const existing = accountsMap.get(email);
     accountsMap.set(email, {
       email,
       name: existing?.name || (email === 'datpt60@fpt.edu.vn' ? 'Phan Tiến Đạt (Đào tạo)' : 'Phan Tiến Đạt'),
       role: 'admin',
+      status: 'active',
       isSuperAdmin: true,
       addedAt: existing?.addedAt || '2025-01-01',
-      addedBy: 'Hệ thống'
+      addedBy: 'Hệ thống',
+      lastLogin: existing?.lastLogin
     });
   });
 
@@ -552,121 +575,71 @@ export async function getAdminUsersFromFirestore(): Promise<AdminAccount[]> {
 
 /**
  * Lắng nghe danh sách Quản trị viên theo thời gian thực (Realtime onSnapshot)
- * Lắng nghe đồng thời cả collection 'admin_users' và doc 'settings/portal_admins'
+ * DUY NHẤT từ collection 'admin_users'
  */
 export function subscribeAdminUsers(
   onUpdate: (admins: AdminAccount[]) => void,
   onError?: (err: any) => void
 ): () => void {
-  let unsub1 = () => {};
-  let unsub2 = () => {};
+  const colRef = collection(db, ADMINS_COLLECTION);
 
-  // 1. Lắng nghe settings/portal_admins (Document này luôn hoạt động 100% trong Firestore)
-  try {
-    const docRef = doc(db, 'settings', SETTINGS_ADMINS_DOC);
-    unsub2 = onSnapshot(
-      docRef,
-      (snap) => {
-        if (snap.exists() && Array.isArray(snap.data()?.admins)) {
-          const list: AdminAccount[] = snap.data().admins;
-          const items: AdminAccount[] = list.map((a) => ({
-            ...a,
-            email: a.email.toLowerCase().trim(),
-            role: (a.role === 'user' ? 'user' : 'admin') as 'admin' | 'user',
-            isSuperAdmin: SYSTEM_SUPER_ADMINS.includes(a.email.toLowerCase().trim())
-          }));
+  return onSnapshot(
+    colRef,
+    (snapshot) => {
+      const accountsMap = new Map<string, AdminAccount>();
 
-          // Đảm bảo Super Admins luôn hiện diện
-          SYSTEM_SUPER_ADMINS.forEach((email) => {
-            if (!items.some((a) => a.email === email)) {
-              items.push({
-                email,
-                name: email === 'datpt60@fpt.edu.vn' ? 'Phan Tiến Đạt (Đào tạo)' : 'Phan Tiến Đạt',
-                role: 'admin',
-                isSuperAdmin: true,
-                addedAt: '2025-01-01',
-                addedBy: 'Hệ thống'
-              });
-            }
+      snapshot.forEach((docSnap) => {
+        const d = docSnap.data();
+        const email = (d.email || '').toLowerCase().trim();
+        if (email) {
+          const isSuper = SYSTEM_SUPER_ADMINS.includes(email) || Boolean(d.isSuperAdmin);
+          const status = d.status === 'revoked' || d.role === 'user' ? 'revoked' : 'active';
+          const role = status === 'revoked' ? 'user' : (d.role === 'admin' || isSuper ? 'admin' : 'user');
+
+          accountsMap.set(email, {
+            email,
+            uid: d.uid,
+            name: d.name || email.split('@')[0],
+            role: isSuper ? 'admin' : role,
+            status: isSuper ? 'active' : status,
+            isSuperAdmin: isSuper,
+            addedAt: d.addedAt || '2025-01-01',
+            addedBy: d.addedBy || 'Hệ thống',
+            updatedAt: d.updatedAt,
+            updatedBy: d.updatedBy,
+            lastLogin: d.lastLogin
           });
-
-          onUpdate(items);
         }
-      },
-      (error) => {
-        console.warn('Lỗi onSnapshot settings/portal_admins:', error);
-        if (onError) onError(error);
-      }
-    );
-  } catch (err) {
-    console.warn('Lỗi khởi tạo onSnapshot settings/portal_admins:', err);
-  }
+      });
 
-  // 2. Lắng nghe bổ sung collection admin_users với xử lý lỗi an toàn
-  try {
-    const colRef = collection(db, ADMINS_COLLECTION);
-    unsub1 = onSnapshot(
-      colRef,
-      (snap) => {
-        if (!snap.empty) {
-          getAdminUsersFromFirestore().then((merged) => {
-            onUpdate(merged);
-          }).catch(() => null);
-        }
-      },
-      () => {
-        // Nuốt lỗi an toàn nếu rules chặn unauthenticated read
-      }
-    );
-  } catch {
-    // Nuốt lỗi an toàn
-  }
+      // Đảm bảo Super Admin luôn hiện diện
+      SYSTEM_SUPER_ADMINS.forEach((email) => {
+        const existing = accountsMap.get(email);
+        accountsMap.set(email, {
+          email,
+          name: existing?.name || (email === 'datpt60@fpt.edu.vn' ? 'Phan Tiến Đạt (Đào tạo)' : 'Phan Tiến Đạt'),
+          role: 'admin',
+          status: 'active',
+          isSuperAdmin: true,
+          addedAt: existing?.addedAt || '2025-01-01',
+          addedBy: 'Hệ thống',
+          lastLogin: existing?.lastLogin
+        });
+      });
 
-  return () => {
-    try { unsub1(); } catch {}
-    try { unsub2(); } catch {}
-  };
-}
-
-/**
- * Lưu danh sách Quản trị viên lên Firestore (cả collection admin_users và settings/portal_admins)
- */
-export async function saveAdminUsersToFirestore(admins: AdminAccount[]): Promise<void> {
-  const sanitized = admins.map((a) => ({
-    email: a.email.toLowerCase().trim(),
-    name: a.name || a.email.split('@')[0],
-    role: (a.role === 'user' ? 'user' : 'admin') as 'admin' | 'user',
-    isSuperAdmin: SYSTEM_SUPER_ADMINS.includes(a.email.toLowerCase().trim()),
-    addedAt: a.addedAt || new Date().toISOString(),
-    addedBy: a.addedBy || 'Super Admin',
-    lastLogin: a.lastLogin
-  }));
-
-  // 1. Lưu vào settings/portal_admins
-  try {
-    const docRef = doc(db, 'settings', SETTINGS_ADMINS_DOC);
-    await setDoc(docRef, {
-      admins: sanitized,
-      updatedAt: new Date().toISOString()
-    });
-  } catch (error) {
-    console.error('Lỗi lưu portal_admins:', error);
-  }
-
-  // 2. Lưu từng document vào collection admin_users
-  try {
-    for (const a of sanitized) {
-      const userRef = doc(db, ADMINS_COLLECTION, getAdminDocId(a.email));
-      await setDoc(userRef, a, { merge: true }).catch(() => null);
+      onUpdate(Array.from(accountsMap.values()));
+    },
+    (error) => {
+      handleFirestoreError(error, OperationType.GET, ADMINS_COLLECTION);
+      if (onError) onError(error);
     }
-  } catch (error) {
-    console.warn('Lỗi đồng bộ admin_users collection:', error);
-  }
+  );
 }
 
 /**
  * Cập nhật role của người dùng ('admin' hoặc 'user')
- * Dùng khi Super Admin chủ động đổi role trên giao diện
+ * Ghi trực tiếp và nguyên tử vào collection 'admin_users/{cleanEmail}'
+ * NÉM LỖI RÕ RÀNG nếu Firestore từ chối để UI thông báo chính xác
  */
 export async function updateUserRoleInFirestore(
   email: string,
@@ -678,52 +651,56 @@ export async function updateUserRoleInFirestore(
     throw new Error('Không thể thay đổi quyền của Super Admin hệ thống!');
   }
 
-  // 1. Đọc danh sách hiện tại từ Firestore
-  const current = await getAdminUsersFromFirestore();
-  const existingIndex = current.findIndex((a) => a.email.toLowerCase().trim() === cleanEmail);
-  let nextList: AdminAccount[];
+  const newStatus = newRole === 'admin' ? 'active' : 'revoked';
+  const userDocRef = doc(db, ADMINS_COLLECTION, cleanEmail);
 
-  if (existingIndex >= 0) {
-    nextList = current.map((a) =>
-      a.email.toLowerCase().trim() === cleanEmail
-        ? { ...a, role: newRole, updatedAt: new Date().toISOString() }
-        : a
-    );
-  } else {
-    nextList = [
-      ...current,
-      {
-        email: cleanEmail,
-        name: cleanEmail.split('@')[0],
-        role: newRole,
-        isSuperAdmin: false,
-        addedAt: new Date().toISOString(),
-        addedBy: updatedBy || 'Super Admin'
-      }
-    ];
-  }
-
-  // 2. Lưu NGAY LẬP TỨC vào settings/portal_admins
-  await saveAdminUsersToFirestore(nextList);
-
-  // 3. Cập nhật document trong collection admin_users (merge: true)
+  // Đọc document hiện tại để bảo toàn uid và name nếu có
+  let existingUid: string | undefined;
+  let existingName: string | undefined;
   try {
-    const userRef = doc(db, ADMINS_COLLECTION, getAdminDocId(cleanEmail));
-    await setDoc(
-      userRef,
-      {
-        email: cleanEmail,
-        role: newRole,
-        updatedAt: new Date().toISOString(),
-        updatedBy: updatedBy || 'Super Admin'
-      },
-      { merge: true }
-    );
-  } catch (err) {
-    console.warn('Lỗi ghi role vào admin_users collection:', err);
+    const existingSnap = await getDoc(userDocRef);
+    if (existingSnap.exists()) {
+      existingUid = existingSnap.data()?.uid;
+      existingName = existingSnap.data()?.name;
+    }
+  } catch {
+    // ignore
   }
 
-  return nextList;
+  const payload: Partial<AdminAccount> = sanitizeData({
+    email: cleanEmail,
+    name: existingName || cleanEmail.split('@')[0],
+    role: newRole,
+    status: newStatus,
+    isSuperAdmin: false,
+    updatedAt: new Date().toISOString(),
+    updatedBy: updatedBy || 'Super Admin'
+  });
+
+  if (existingUid) {
+    payload.uid = existingUid;
+  }
+
+  // 1. Ghi vào document chính theo Email (NÉM LỖI NẾU THẤT BẠI - KHÔNG ĐƯỢC NUỐT LỖI)
+  try {
+    await setDoc(userDocRef, payload, { merge: true });
+  } catch (error) {
+    handleFirestoreError(error, OperationType.WRITE, `${ADMINS_COLLECTION}/${cleanEmail}`);
+    throw error;
+  }
+
+  // 2. Nếu đã có Firebase UID, đồng bộ bản ghi theo UID để Firestore Security Rules kiểm tra tức thì
+  if (existingUid) {
+    try {
+      const uidDocRef = doc(db, ADMINS_COLLECTION, existingUid);
+      await setDoc(uidDocRef, payload, { merge: true });
+    } catch {
+      // ignore
+    }
+  }
+
+  // Lấy danh sách mới nhất xác nhận từ Firestore
+  return await getAdminUsersFromFirestore();
 }
 
 /**
@@ -739,93 +716,104 @@ export async function addAdminUserToFirestore(admin: {
 }
 
 /**
- * Thu hồi quyền Quản trị viên (Đổi role từ 'admin' thành 'user')
- * Đảm bảo document vẫn tồn tại trong Firestore với role: 'user' để không bị khôi phục lại
+ * Thu hồi quyền Quản trị viên (Đổi role từ 'admin' thành 'user', status: 'revoked')
+ * Đảm bảo document vẫn tồn tại trong Firestore với role: 'user' và status: 'revoked'
  */
 export async function removeAdminUserFromFirestore(email: string): Promise<AdminAccount[]> {
   return updateUserRoleInFirestore(email, 'user', 'Super Admin');
 }
 
 /**
- * Xử lý khi user đăng nhập (Google Login / Auth Context)
- * YÊU CẦU 1:
- * - Kiểm tra document của user trong collection admin_users và settings/portal_admins.
- * - Nếu ĐÃ TỒN TẠI, TUYỆT ĐỐI KHÔNG ĐƯỢC ghi đè trường `role`.
- * - Chỉ dùng setDoc với { merge: true } để cập nhật `lastLogin`, giữ nguyên role hiện tại.
- * - Nếu role hiện tại là 'user' (đã bị thu hồi), isAuthorizedAdmin = false.
+ * Xử lý khi user đăng nhập (Firebase / Google Auth)
+ * - Kiểm tra bản ghi từ Firestore bằng getDocFromServer để tránh cache cũ.
+ * - Nếu status === 'revoked' hoặc role === 'user': isAuthorizedAdmin = false!
+ * - TUYỆT ĐỐI KHÔNG GHI ĐÈ role nếu đã tồn tại.
+ * - Chỉ cập nhật lastLogin và uid với merge: true.
  */
 export async function handleUserLoginAuthCheck(
   email: string,
-  profileName?: string
+  profileName?: string,
+  firebaseUid?: string
 ): Promise<{ isAuthorizedAdmin: boolean; role: 'admin' | 'user'; account: AdminAccount }> {
   const cleanEmail = email.toLowerCase().trim();
   const isSuper = SYSTEM_SUPER_ADMINS.includes(cleanEmail);
 
-  // Super Admin luôn có quyền tối cao
+  // 1. Super Admin luôn có quyền tối cao
   if (isSuper) {
     const superAcc: AdminAccount = {
       email: cleanEmail,
+      uid: firebaseUid || auth.currentUser?.uid,
       name: profileName || (cleanEmail === 'datpt60@fpt.edu.vn' ? 'Phan Tiến Đạt (Đào tạo)' : 'Phan Tiến Đạt'),
       role: 'admin',
+      status: 'active',
       isSuperAdmin: true,
       addedAt: '2025-01-01',
       addedBy: 'Hệ thống',
       lastLogin: new Date().toISOString()
     };
+
+    // Cập nhật lastLogin và UID
+    try {
+      const docRef = doc(db, ADMINS_COLLECTION, cleanEmail);
+      await setDoc(docRef, sanitizeData(superAcc), { merge: true });
+      if (firebaseUid) {
+        await setDoc(doc(db, ADMINS_COLLECTION, firebaseUid), sanitizeData(superAcc), { merge: true });
+      }
+    } catch {
+      // ignore
+    }
+
     return { isAuthorizedAdmin: true, role: 'admin', account: superAcc };
   }
 
-  // 1. Kiểm tra danh sách trên Firestore (portal_admins doc + admin_users collection)
-  const allFirestoreUsers = await getAdminUsersFromFirestore();
-  const foundInFirestore = allFirestoreUsers.find((a) => a.email.toLowerCase().trim() === cleanEmail);
-
-  // 2. Kiểm tra document riêng lẻ trong collection 'admin_users'
-  const userRef = doc(db, ADMINS_COLLECTION, getAdminDocId(cleanEmail));
+  // 2. Đọc trực tiếp từ Cloud Firestore server (không dùng cache trình duyệt)
+  const userRef = doc(db, ADMINS_COLLECTION, cleanEmail);
   let userDocData: any = null;
+
   try {
-    const snap = await getDoc(userRef);
+    const snap = await getDocFromServer(userRef).catch(() => getDoc(userRef));
     if (snap.exists()) {
       userDocData = snap.data();
     }
-  } catch (err) {
-    // catch permission error
+  } catch {
+    // ignore
   }
 
   let finalRole: 'admin' | 'user' = 'user';
+  let finalStatus: 'active' | 'revoked' = 'active';
   let account: AdminAccount;
 
-  if (foundInFirestore) {
-    // NẾU ĐÃ TỒN TẠI TRÊN FIRESTORE: TUYỆT ĐỐI GIỮ NGUYÊN ROLE!
-    if (foundInFirestore.role === 'user' || (userDocData && userDocData.role === 'user')) {
+  if (userDocData) {
+    // ĐÃ TỒN TẠI TRÊN FIRESTORE: TUYỆT ĐỐI GIỮ NGUYÊN ROLE VÀ STATUS!
+    if (userDocData.status === 'revoked' || userDocData.role === 'user') {
       finalRole = 'user';
+      finalStatus = 'revoked';
     } else {
-      finalRole = foundInFirestore.role;
+      finalRole = userDocData.role === 'admin' ? 'admin' : 'user';
+      finalStatus = userDocData.status || 'active';
     }
 
     account = {
-      ...foundInFirestore,
-      name: foundInFirestore.name || profileName || cleanEmail.split('@')[0],
-      role: finalRole,
-      lastLogin: new Date().toISOString()
-    };
-  } else if (userDocData) {
-    finalRole = userDocData.role === 'user' ? 'user' : 'admin';
-    account = {
       email: cleanEmail,
+      uid: firebaseUid || userDocData.uid || auth.currentUser?.uid,
       name: userDocData.name || profileName || cleanEmail.split('@')[0],
       role: finalRole,
+      status: finalStatus,
       isSuperAdmin: false,
       addedAt: userDocData.addedAt || new Date().toISOString(),
       addedBy: userDocData.addedBy || 'Hệ thống',
       lastLogin: new Date().toISOString()
     };
   } else {
-    // Hoàn toàn CHƯA CÓ TRÊN FIRESTORE: Mặc định là 'user'
+    // HOÀN TOÀN CHƯA CÓ TRÊN FIRESTORE: MẶC ĐỊNH LÀ NGƯỜI DÙNG THƯỜNG (USER)
     finalRole = 'user';
+    finalStatus = 'active';
     account = {
       email: cleanEmail,
+      uid: firebaseUid || auth.currentUser?.uid,
       name: profileName || cleanEmail.split('@')[0],
       role: 'user',
+      status: 'active',
       isSuperAdmin: false,
       addedAt: new Date().toISOString(),
       addedBy: 'Đăng nhập',
@@ -833,29 +821,29 @@ export async function handleUserLoginAuthCheck(
     };
   }
 
-  // CẬP NHẬT lastLogin VỚI { merge: true }, TUYỆT ĐỐI KHÔNG GHI ĐÈ ROLE
+  // Cập nhật lastLogin và uid nếu có (merge: true, KHÔNG GHI ĐÈ ROLE)
   try {
     await setDoc(
       userRef,
-      {
+      sanitizeData({
         email: cleanEmail,
+        uid: firebaseUid || auth.currentUser?.uid,
+        name: account.name,
         lastLogin: new Date().toISOString()
-      },
+      }),
       { merge: true }
     );
   } catch {
     // ignore
   }
 
-  const isAuthorizedAdmin = finalRole === 'admin';
+  const isAuthorizedAdmin = finalRole === 'admin' && finalStatus === 'active';
   return { isAuthorizedAdmin, role: finalRole, account };
 }
 
 /**
  * Xử lý đồng bộ từ CSV Google Sheets (permissionsCsvUrl)
- * YÊU CẦU 2 & CHỈ ĐỊNH TRIỆT ĐỂ:
- * - Tuyệt đối không được update `role` từ CSV nếu user đã tồn tại trên Firestore!
- * - Giữ nguyên 100% role hiện tại trên Firestore cho mọi tài khoản đã có.
+ * TUYỆT ĐỐI GIỮ NGUYÊN role và status trên Firestore cho mọi tài khoản đã có.
  */
 export async function syncPermissionsCsvWithoutOverwritingRoles(
   csvAccounts: AdminAccount[]
@@ -874,10 +862,8 @@ export async function syncPermissionsCsvWithoutOverwritingRoles(
 
     if (firestoreMap.has(email)) {
       // User ĐÃ CÓ trên Firestore:
-      // TUYỆT ĐỐI GIỮ NGUYÊN ROLE TRÊN FIRESTORE (kể cả role đang là 'user' hay 'admin')!
-      // KHÔNG ĐƯỢC PHÉP ĐỂ DỮ LIỆU TỪ CSV GHI ĐÈ TRƯỜNG ROLE!
+      // TUYỆT ĐỐI GIỮ NGUYÊN ROLE VÀ STATUS TRÊN FIRESTORE!
       const current = firestoreMap.get(email)!;
-      // Chỉ cập nhật mật khẩu/pin hoặc tên nếu còn trống, KHÔNG ĐƯỢC ghi đè role!
       current.passwordOrPin = csvAcc.passwordOrPin || current.passwordOrPin;
       if (csvAcc.name && !current.name) {
         current.name = csvAcc.name;
@@ -888,25 +874,42 @@ export async function syncPermissionsCsvWithoutOverwritingRoles(
         ...csvAcc,
         email,
         role: csvAcc.role || 'user',
+        status: csvAcc.role === 'admin' ? 'active' : 'revoked',
         isSuperAdmin: false,
         addedAt: new Date().toISOString(),
         addedBy: 'Google Sheets CSV'
       };
       mergedList.push(newAcc);
       firestoreMap.set(email, newAcc);
+      await setDoc(doc(db, ADMINS_COLLECTION, email), sanitizeData(newAcc), { merge: true }).catch(() => null);
     }
   }
 
-  await saveAdminUsersToFirestore(mergedList);
   return mergedList;
 }
 
 /**
  * Khôi phục lại danh sách 8 Admin mặc định của hệ thống lên Firestore
+ * CHỈ CHẠY KHI SUPER ADMIN CHỦ ĐỘNG XÁC NHẬN.
  */
 export async function resetDefaultAdminsToFirestore(): Promise<AdminAccount[]> {
-  await saveAdminUsersToFirestore(INITIAL_TEMPLATE_ADMINS);
-  return INITIAL_TEMPLATE_ADMINS;
+  for (const admin of INITIAL_TEMPLATE_ADMINS) {
+    const cleanEmail = admin.email.toLowerCase().trim();
+    const docRef = doc(db, ADMINS_COLLECTION, cleanEmail);
+    await setDoc(
+      docRef,
+      sanitizeData({
+        ...admin,
+        email: cleanEmail,
+        role: 'admin',
+        status: 'active',
+        updatedAt: new Date().toISOString(),
+        updatedBy: 'Khôi phục mẫu Super Admin'
+      }),
+      { merge: true }
+    );
+  }
+  return await getAdminUsersFromFirestore();
 }
 
 /**

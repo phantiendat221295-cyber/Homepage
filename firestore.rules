@@ -1,44 +1,128 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    // Tiện ích Webapps: Cho phép đọc công khai để sinh viên và giảng viên truy cập portal
-    match /apps/{appId} {
-      allow read: if true;
-      allow write: if true; // Lưu ý: Có thể siết chặt theo request.auth khi bật Firebase Auth
+
+    // ==========================================
+    // HELPER FUNCTIONS (Zero-Trust ABAC)
+    // ==========================================
+
+    function isSignedIn() {
+      return request.auth != null;
     }
 
-    // Yêu cầu hỗ trợ: Mọi người có thể gửi yêu cầu hỗ trợ, đọc và cập nhật trạng thái
-    match /support_tickets/{ticketId} {
-      allow read, create, update: if true;
-      allow delete: if true;
+    function isEmailVerified() {
+      return isSignedIn() && request.auth.token.email_verified == true;
     }
 
-    // Cấu hình hệ thống & Google Sheets
-    match /settings/{settingId} {
-      allow read, write: if true;
+    function userEmail() {
+      return request.auth.token.email.lower();
     }
 
-    // Thông báo đào tạo
-    match /notifications/{notificationId} {
-      allow read, write: if true;
-    }
-
-    // Kiểm tra quyền Super Admin
-    function isSuperAdmin() {
-      return request.auth != null && (
-        request.auth.token.email in ['datpt60@fpt.edu.vn', 'phantiendat221295@gmail.com'] ||
-        (exists(/databases/$(database)/documents/admin_users/$(request.auth.uid)) &&
-         get(/databases/$(database)/documents/admin_users/$(request.auth.uid)).data.role == 'superAdmin')
+    // 2 Super Admin khởi tạo vĩnh viễn trong hệ thống
+    function isHardcodedSuperAdmin() {
+      return isEmailVerified() && (
+        userEmail() in ['datpt60@fpt.edu.vn', 'phantiendat221295@gmail.com']
       );
     }
 
-    // Danh sách phân quyền Quản trị viên (Admin)
-    match /admin_users/{adminId} {
+    // Kiểm tra bản ghi admin trong collection admin_users (theo email hoặc theo uid)
+    function hasActiveAdminByEmail() {
+      return isEmailVerified() &&
+        exists(/databases/$(database)/documents/admin_users/$(userEmail())) &&
+        get(/databases/$(database)/documents/admin_users/$(userEmail())).data.status == 'active' &&
+        get(/databases/$(database)/documents/admin_users/$(userEmail())).data.role in ['admin', 'superAdmin'];
+    }
+
+    function hasActiveAdminByUid() {
+      return isSignedIn() &&
+        exists(/databases/$(database)/documents/admin_users/$(request.auth.uid)) &&
+        get(/databases/$(database)/documents/admin_users/$(request.auth.uid)).data.status == 'active' &&
+        get(/databases/$(database)/documents/admin_users/$(request.auth.uid)).data.role in ['admin', 'superAdmin'];
+    }
+
+    function isAdmin() {
+      return isHardcodedSuperAdmin() || hasActiveAdminByEmail() || hasActiveAdminByUid();
+    }
+
+    function isSuperAdmin() {
+      return isHardcodedSuperAdmin() ||
+        (
+          isEmailVerified() &&
+          exists(/databases/$(database)/documents/admin_users/$(userEmail())) &&
+          get(/databases/$(database)/documents/admin_users/$(userEmail())).data.status == 'active' &&
+          get(/databases/$(database)/documents/admin_users/$(userEmail())).data.role == 'superAdmin'
+        ) ||
+        (
+          isSignedIn() &&
+          exists(/databases/$(database)/documents/admin_users/$(request.auth.uid)) &&
+          get(/databases/$(database)/documents/admin_users/$(request.auth.uid)).data.status == 'active' &&
+          get(/databases/$(database)/documents/admin_users/$(request.auth.uid)).data.role == 'superAdmin'
+        );
+    }
+
+    // ==========================================
+    // 1. WEBAPPS (apps)
+    // ==========================================
+    // Sinh viên & Giảng viên đọc công khai; CHỈ Admin đang hoạt động mới được thêm/sửa/xóa
+    match /apps/{appId} {
       allow read: if true;
-      allow create: if request.auth != null;
-      // Chỉ cho phép update khi request.auth hợp lệ và người thực hiện update phải có role là superAdmin
-      allow update: if request.auth != null && isSuperAdmin();
-      allow delete: if request.auth != null && isSuperAdmin();
+      allow create, update, delete: if isAdmin();
+    }
+
+    // ==========================================
+    // 2. SUPPORT TICKETS (support_tickets)
+    // ==========================================
+    // Mọi người có thể tạo yêu cầu hỗ trợ; CHỈ Admin mới xem, cập nhật trạng thái; CHỈ Super Admin hoặc Admin mới xóa
+    match /support_tickets/{ticketId} {
+      allow read: if isAdmin();
+      allow create: if request.resource.data.name is string &&
+                       request.resource.data.name.size() > 0 &&
+                       request.resource.data.name.size() <= 100;
+      allow update: if isAdmin();
+      allow delete: if isAdmin();
+    }
+
+    // ==========================================
+    // 3. SETTINGS & PORTAL CONFIG (settings)
+    // ==========================================
+    // portal_config: Đọc công khai để hiển thị logo/cơ sở; Ghi chỉ dành cho Admin
+    // Các document khác: CHỈ Super Admin mới được đọc/ghi
+    match /settings/{settingId} {
+      allow read: if settingId == 'portal_config' || isAdmin();
+      allow write: if isSuperAdmin() || (isAdmin() && settingId == 'portal_config');
+    }
+
+    // ==========================================
+    // 4. NOTIFICATIONS (notifications)
+    // ==========================================
+    // Sinh viên & Giảng viên đọc thông báo công khai; CHỈ Admin mới được đăng/sửa/xóa
+    match /notifications/{notificationId} {
+      allow read: if true;
+      allow create, update, delete: if isAdmin();
+    }
+
+    // ==========================================
+    // 5. ADMIN USERS (admin_users) - NGUỒN QUYỀN CHÍNH
+    // ==========================================
+    match /admin_users/{adminId} {
+      // Đọc: Cho phép Admin xem toàn bộ danh sách, hoặc người dùng đã đăng nhập tự xem quyền của chính mình
+      allow read: if isAdmin() ||
+                     (isSignedIn() && (adminId == userEmail() || adminId == request.auth.uid));
+
+      // Thao tác phân quyền: DUY NHẤT Super Admin mới được thêm, cập nhật vai trò, hoặc xóa
+      // Không ai được phép hạ quyền hoặc xóa 2 tài khoản Super Admin hệ thống
+      allow create: if isSuperAdmin();
+      allow update: if isSuperAdmin() &&
+                       !(adminId in ['datpt60@fpt.edu.vn', 'phantiendat221295@gmail.com'] &&
+                         request.resource.data.role != 'admin' &&
+                         request.resource.data.role != 'superAdmin');
+      allow delete: if isSuperAdmin() &&
+                       !(adminId in ['datpt60@fpt.edu.vn', 'phantiendat221295@gmail.com']);
+    }
+
+    // Mặc định từ chối tất cả collection khác
+    match /{document=**} {
+      allow read, write: if false;
     }
   }
 }

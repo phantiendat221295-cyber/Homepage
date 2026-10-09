@@ -33,13 +33,17 @@ export interface QuickToolItem {
 
 export interface AdminAccount {
   email: string;
+  uid?: string;
   passwordOrPin?: string;
   name: string;
   role: 'admin' | 'user';
+  status?: 'active' | 'revoked';
   avatar?: string;
   isSuperAdmin?: boolean;
   addedAt?: string;
   addedBy?: string;
+  updatedAt?: string;
+  updatedBy?: string;
   lastLogin?: string;
 }
 

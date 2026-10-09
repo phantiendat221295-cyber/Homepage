@@ -149,6 +149,12 @@ export const RoleManagementView: React.FC<RoleManagementViewProps> = ({
   const [isAddingAdmin, setIsAddingAdmin] = useState(false);
   const [adminActionError, setAdminActionError] = useState<string | null>(null);
   const [adminActionSuccess, setAdminActionSuccess] = useState<string | null>(null);
+  const [loadingEmails, setLoadingEmails] = useState<Record<string, boolean>>({});
+
+  // Reset confirmation modal state
+  const [showResetModal, setShowResetModal] = useState(false);
+  const [isResetting, setIsResetting] = useState(false);
+  const [resetAcknowledged, setResetAcknowledged] = useState(false);
 
   // Search in table
   const [searchTerm, setSearchTerm] = useState('');
@@ -219,21 +225,20 @@ export const RoleManagementView: React.FC<RoleManagementViewProps> = ({
     }
   };
 
-  const handleResetDefaults = async () => {
+  const handleConfirmResetDefaults = async () => {
     if (!onResetDefaultAdmins) return;
-    if (
-      window.confirm(
-        'Khôi phục danh sách 8 Quản trị viên ban đầu của hệ thống lên Firestore?'
-      )
-    ) {
-      setAdminActionError(null);
-      setAdminActionSuccess(null);
-      try {
-        await onResetDefaultAdmins();
-        setAdminActionSuccess('Đã khôi phục danh sách 8 Quản trị viên mặc định lên Firestore Cloud!');
-      } catch (err: any) {
-        setAdminActionError(err.message || 'Lỗi khôi phục Admin');
-      }
+    setIsResetting(true);
+    setAdminActionError(null);
+    setAdminActionSuccess(null);
+    try {
+      await onResetDefaultAdmins();
+      setAdminActionSuccess('Đã khôi phục danh sách 8 Quản trị viên ban đầu lên Cloud Firestore thành công!');
+      setShowResetModal(false);
+      setResetAcknowledged(false);
+    } catch (err: any) {
+      setAdminActionError(err.message || 'Lỗi khôi phục Admin trên Cloud Firestore');
+    } finally {
+      setIsResetting(false);
     }
   };
 
@@ -257,11 +262,11 @@ export const RoleManagementView: React.FC<RoleManagementViewProps> = ({
     setAdminActionSuccess(null);
     try {
       await onAddAdminUser(newAdminEmail.trim(), newAdminName.trim());
-      setAdminActionSuccess(`Đã cấp quyền Quản trị viên cho "${newAdminEmail.trim()}" thành công!`);
+      setAdminActionSuccess(`Đã cấp quyền Quản trị viên cho "${newAdminEmail.trim()}" thành công trên Cloud Firestore!`);
       setNewAdminEmail('');
       setNewAdminName('');
     } catch (err: any) {
-      setAdminActionError(err.message || 'Lỗi khi cấp quyền Admin');
+      setAdminActionError(err.message || 'Lỗi khi cấp quyền Admin trên Cloud Firestore');
     } finally {
       setIsAddingAdmin(false);
     }
@@ -270,28 +275,17 @@ export const RoleManagementView: React.FC<RoleManagementViewProps> = ({
   const handleRemoveAdminClick = async (email: string) => {
     if (
       window.confirm(
-        `Bạn có chắc chắn muốn thu hồi quyền Admin của "${email}"? Tài khoản này sẽ chuyển sang vai trò Người dùng (User) và không thể truy cập quyền Quản trị.`
+        `Bạn có chắc chắn muốn thu hồi quyền Admin của "${email}"? Tài khoản này sẽ chuyển sang vai trò Người dùng (User - Đã thu hồi) và ngay lập tức bị tước mọi quyền quản trị trên hệ thống.`
       )
     ) {
-      if (onUpdateAdminRole) {
-        await handleRoleChange(email, 'user');
-        return;
-      }
-      if (!onRemoveAdminUser) return;
-      setAdminActionError(null);
-      setAdminActionSuccess(null);
-      try {
-        await onRemoveAdminUser(email);
-        setAdminActionSuccess(`Đã thu hồi quyền Quản trị viên của "${email}" thành công!`);
-      } catch (err: any) {
-        setAdminActionError(err.message || 'Lỗi khi thu hồi quyền Admin');
-      }
+      await handleRoleChange(email, 'user');
     }
   };
 
   const handleRoleChange = async (email: string, newRole: 'admin' | 'user') => {
     setAdminActionError(null);
     setAdminActionSuccess(null);
+    setLoadingEmails((prev) => ({ ...prev, [email]: true }));
     try {
       if (onUpdateAdminRole) {
         await onUpdateAdminRole(email, newRole);
@@ -299,10 +293,12 @@ export const RoleManagementView: React.FC<RoleManagementViewProps> = ({
         await onRemoveAdminUser(email);
       }
       setAdminActionSuccess(
-        `Đã đổi quyền của "${email}" thành "${newRole === 'admin' ? 'Quản trị viên (Admin)' : 'Người dùng (User)'}"!`
+        `Đã đổi quyền của "${email}" thành "${newRole === 'admin' ? 'Quản trị viên (Admin)' : 'Người dùng (User - Đã thu hồi)'}" trên Cloud Firestore!`
       );
     } catch (err: any) {
-      setAdminActionError(err.message || 'Lỗi khi cập nhật vai trò');
+      setAdminActionError(err.message || 'Lỗi khi cập nhật vai trò trên Cloud Firestore');
+    } finally {
+      setLoadingEmails((prev) => ({ ...prev, [email]: false }));
     }
   };
 
@@ -608,7 +604,10 @@ export const RoleManagementView: React.FC<RoleManagementViewProps> = ({
                     {onResetDefaultAdmins && (
                       <button
                         type="button"
-                        onClick={handleResetDefaults}
+                        onClick={() => {
+                          setResetAcknowledged(false);
+                          setShowResetModal(true);
+                        }}
                         className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-indigo-50 hover:bg-indigo-100 text-indigo-700 text-xs font-bold border border-indigo-200 transition-colors cursor-pointer"
                         title="Khôi phục lại danh sách 8 Quản trị viên mặc định của hệ thống"
                       >
@@ -624,7 +623,7 @@ export const RoleManagementView: React.FC<RoleManagementViewProps> = ({
                     <thead>
                       <tr className="bg-slate-50 text-slate-600 font-bold border-b border-slate-200">
                         <th className="py-3 px-4">Tài khoản Quản trị</th>
-                        <th className="py-3 px-4">Cấp bậc / Quyền hạn</th>
+                        <th className="py-3 px-4">Trạng thái & Quyền hạn</th>
                         <th className="py-3 px-4">Thời gian cấp</th>
                         <th className="py-3 px-4 text-right">Thao tác</th>
                       </tr>
@@ -634,6 +633,8 @@ export const RoleManagementView: React.FC<RoleManagementViewProps> = ({
                         const isSuper =
                           admin.isSuperAdmin ||
                           SYSTEM_SUPER_ADMINS.includes(admin.email.toLowerCase().trim());
+                        const isRevoked = admin.role === 'user' || admin.status === 'revoked';
+                        const isLoading = Boolean(loadingEmails[admin.email]);
 
                         return (
                           <tr key={admin.email} className="hover:bg-slate-50/80 transition-colors">
@@ -643,6 +644,8 @@ export const RoleManagementView: React.FC<RoleManagementViewProps> = ({
                                   className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 font-bold text-xs ${
                                     isSuper
                                       ? 'bg-amber-100 text-amber-800 border border-amber-300'
+                                      : isRevoked
+                                      ? 'bg-slate-100 text-slate-500 border border-slate-200'
                                       : 'bg-blue-100 text-blue-800 border border-blue-200'
                                   }`}
                                 >
@@ -650,16 +653,25 @@ export const RoleManagementView: React.FC<RoleManagementViewProps> = ({
                                 </div>
                                 <div>
                                   <div className="font-bold text-slate-800 flex items-center gap-1.5">
-                                    <span>{admin.name || admin.email}</span>
+                                    <span className={isRevoked ? 'text-slate-500 line-through' : ''}>
+                                      {admin.name || admin.email}
+                                    </span>
                                     {isSuper && (
                                       <span className="px-1.5 py-0.2 bg-amber-500 text-white text-[10px] font-black rounded-md">
-                                        ADMIN
+                                        SUPER
                                       </span>
                                     )}
                                   </div>
-                                  <span className="text-xs text-slate-500 font-mono">
-                                    {admin.email}
-                                  </span>
+                                  <div className="flex items-center gap-2">
+                                    <span className="text-xs text-slate-500 font-mono">
+                                      {admin.email}
+                                    </span>
+                                    {admin.uid && (
+                                      <span className="text-[10px] text-slate-400 font-mono" title={`UID: ${admin.uid}`}>
+                                        • UID: {admin.uid.slice(0, 6)}...
+                                      </span>
+                                    )}
+                                  </div>
                                 </div>
                               </div>
                             </td>
@@ -671,19 +683,31 @@ export const RoleManagementView: React.FC<RoleManagementViewProps> = ({
                                   Super Admin (Toàn quyền)
                                 </span>
                               ) : (
-                                <div className="flex items-center gap-1.5">
+                                <div className="flex items-center gap-2">
                                   <select
-                                    value={admin.role || 'admin'}
+                                    disabled={isLoading}
+                                    value={isRevoked ? 'user' : 'admin'}
                                     onChange={(e) => handleRoleChange(admin.email, e.target.value as 'admin' | 'user')}
                                     className={`text-xs font-bold px-2.5 py-1 rounded-xl border focus:outline-none cursor-pointer transition-colors ${
-                                      admin.role === 'admin'
+                                      !isRevoked
                                         ? 'bg-emerald-50 text-emerald-800 border-emerald-300'
                                         : 'bg-rose-50 text-rose-700 border-rose-200'
                                     }`}
                                   >
                                     <option value="admin">Quản trị viên (Admin)</option>
-                                    <option value="user">Người dùng (User - Đã thu hồi)</option>
+                                    <option value="user">Người dùng (Đã thu hồi)</option>
                                   </select>
+                                  {!isRevoked ? (
+                                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-200">
+                                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                                      Active
+                                    </span>
+                                  ) : (
+                                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-bold bg-rose-100 text-rose-800 border border-rose-200">
+                                      <span className="w-1.5 h-1.5 rounded-full bg-rose-500" />
+                                      Revoked
+                                    </span>
+                                  )}
                                 </div>
                               )}
                             </td>
@@ -705,7 +729,11 @@ export const RoleManagementView: React.FC<RoleManagementViewProps> = ({
                                 <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-xl bg-amber-50 text-amber-800 font-bold text-xs border border-amber-200">
                                   Super Admin (Bảo vệ)
                                 </span>
-                              ) : admin.role === 'user' ? (
+                              ) : isLoading ? (
+                                <span className="text-xs text-slate-400 font-semibold animate-pulse">
+                                  Đang lưu Firestore...
+                                </span>
+                              ) : isRevoked ? (
                                 <button
                                   type="button"
                                   onClick={() => handleRoleChange(admin.email, 'admin')}
@@ -734,6 +762,87 @@ export const RoleManagementView: React.FC<RoleManagementViewProps> = ({
                   </table>
                 </div>
               </div>
+
+              {/* Modal Xác nhận Khôi phục 8 Admin Ban Đầu */}
+              {showResetModal && (
+                <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 animate-in fade-in">
+                  <div className="bg-white rounded-3xl max-w-lg w-full p-6 sm:p-7 shadow-2xl border border-slate-200 space-y-5 animate-in zoom-in-95">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="flex items-center gap-3">
+                        <div className="w-12 h-12 rounded-2xl bg-amber-100 text-amber-700 flex items-center justify-center shrink-0">
+                          <ShieldAlert size={26} />
+                        </div>
+                        <div>
+                          <h4 className="font-extrabold text-slate-800 text-lg">
+                            Cảnh Báo: Khôi Phục 8 Admin Ban Đầu
+                          </h4>
+                          <span className="text-xs text-rose-600 font-semibold">
+                            Thao tác ghi đè trên Cloud Firestore
+                          </span>
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setShowResetModal(false)}
+                        className="p-1.5 text-slate-400 hover:text-slate-600 rounded-xl cursor-pointer"
+                      >
+                        <X size={18} />
+                      </button>
+                    </div>
+
+                    <div className="p-4 bg-amber-50 rounded-2xl border border-amber-200 text-xs text-amber-900 space-y-2 leading-relaxed">
+                      <p className="font-bold text-amber-950">
+                        ⚠️ Bạn đang chuẩn bị khôi phục quyền Admin cho 8 tài khoản mẫu ban đầu:
+                      </p>
+                      <ul className="list-disc pl-5 space-y-0.5 text-slate-700 font-mono text-[11px]">
+                        <li>datpt60@fpt.edu.vn (Super Admin)</li>
+                        <li>phantiendat221295@gmail.com (Super Admin)</li>
+                        <li>thuanl2@fpt.edu.vn (Admin)</li>
+                        <li>vylnu@fpt.edu.vn (Admin)</li>
+                        <li>loiqt@fpt.edu.vn (Admin)</li>
+                        <li>duocdty2@fpt.edu.vn (Admin)</li>
+                        <li>dienvnn@fpt.edu.vn (Admin)</li>
+                        <li>thainh44@fpt.edu.vn (Admin)</li>
+                      </ul>
+                      <p className="text-amber-800 pt-1">
+                        <strong>Lưu ý quan trọng:</strong> Bất kỳ tài khoản nào trong số này đã bị thu hồi trước đây sẽ được cấp lại quyền Quản trị viên (status: active).
+                      </p>
+                    </div>
+
+                    <label className="flex items-start gap-2.5 p-3 rounded-xl bg-slate-50 border border-slate-200 cursor-pointer text-xs text-slate-700">
+                      <input
+                        type="checkbox"
+                        checked={resetAcknowledged}
+                        onChange={(e) => setResetAcknowledged(e.target.checked)}
+                        className="mt-0.5 rounded text-blue-600 focus:ring-blue-500"
+                      />
+                      <span>
+                        Tôi là Super Admin, tôi hiểu rõ thao tác này và xác nhận khôi phục lại quyền Admin cho 8 tài khoản trên.
+                      </span>
+                    </label>
+
+                    <div className="flex items-center justify-end gap-3 pt-2">
+                      <button
+                        type="button"
+                        disabled={isResetting}
+                        onClick={() => setShowResetModal(false)}
+                        className="px-4 py-2.5 rounded-xl text-slate-600 hover:text-slate-800 text-xs font-bold transition-colors cursor-pointer"
+                      >
+                        Hủy bỏ
+                      </button>
+                      <button
+                        type="button"
+                        disabled={!resetAcknowledged || isResetting}
+                        onClick={handleConfirmResetDefaults}
+                        className="px-5 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold transition-all shadow-xs flex items-center gap-2 cursor-pointer disabled:opacity-40"
+                      >
+                        <RotateCcw size={14} className={isResetting ? 'animate-spin' : ''} />
+                        <span>{isResetting ? 'Đang ghi Cloud Firestore...' : 'Xác Nhận Khôi Phục'}</span>
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
 
               {/* Security info box */}
               <div className="p-4 bg-slate-50 rounded-2xl border border-slate-200 text-xs text-slate-600 space-y-1.5 leading-relaxed">

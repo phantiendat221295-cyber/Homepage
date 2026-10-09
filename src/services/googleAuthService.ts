@@ -1,4 +1,6 @@
-// Dịch vụ xác thực tài khoản Google chính thức với Google Identity Services (GIS) / OAuth 2.0
+// Dịch vụ xác thực tài khoản Google chính thức kết hợp Google Identity Services (GIS) & Firebase Authentication
+import { GoogleAuthProvider, signInWithCredential, signInWithPopup } from 'firebase/auth';
+import { auth } from './firebase';
 
 declare global {
   interface Window {
@@ -11,6 +13,7 @@ export interface GoogleUserProfile {
   name: string;
   picture?: string;
   email_verified?: boolean;
+  uid?: string;
 }
 
 // Google OAuth Client ID chính thức của hệ thống FPT PolySchool
@@ -35,7 +38,8 @@ export function parseGoogleJwt(credential: string): GoogleUserProfile {
       email: (data.email || '').toLowerCase().trim(),
       name: data.name || data.given_name || (data.email ? data.email.split('@')[0] : 'Quản trị viên'),
       picture: data.picture,
-      email_verified: Boolean(data.email_verified)
+      email_verified: Boolean(data.email_verified),
+      uid: data.sub
     };
   } catch (err: any) {
     throw new Error('Không thể giải mã Google ID Token: ' + err.message);
@@ -44,7 +48,7 @@ export function parseGoogleJwt(credential: string): GoogleUserProfile {
 
 /**
  * Hiển thị nút Đăng nhập chính thức từ Google Identity Services (GIS renderButton)
- * Nút do chính Google kết xuất và xử lý trực tiếp giúp không bao giờ bị trình duyệt chặn popup.
+ * Tự động tạo phiên Firebase Authentication để xác thực định danh và quyền Firestore.
  */
 export function renderGoogleSignInButton(
   container: HTMLElement,
@@ -65,13 +69,24 @@ export function renderGoogleSignInButton(
     try {
       window.google.accounts.id.initialize({
         client_id: effectiveClientId,
-        callback: (response: any) => {
+        callback: async (response: any) => {
           if (!response.credential) {
             onError(new Error('Không nhận được thông tin xác thực từ Google.'));
             return;
           }
           try {
             const profile = parseGoogleJwt(response.credential);
+
+            // Đồng bộ phiên đăng nhập vào Firebase Authentication bằng Google ID Token
+            try {
+              const fbCred = GoogleAuthProvider.credential(response.credential);
+              const userCred = await signInWithCredential(auth, fbCred);
+              profile.uid = userCred.user.uid;
+              profile.email_verified = Boolean(userCred.user.emailVerified);
+            } catch (fbErr: any) {
+              console.warn('[Firebase Auth Link]:', fbErr?.message || fbErr);
+            }
+
             onSuccess(profile);
           } catch (e: any) {
             onError(e);
@@ -123,10 +138,38 @@ export function renderGoogleSignInButton(
 }
 
 /**
- * Kích hoạt popup đăng nhập Google OAuth 2.0 (Token Client)
- * Luôn gọi synchronous requestAccessToken để tránh bị popup blocker chặn
+ * Kích hoạt popup đăng nhập Google với Firebase Authentication
+ * Tạo phiên Firebase Auth chính thức, hỗ trợ fallback GIS nếu cần.
  */
 export const signInWithGoogleOAuth = async (clientId?: string): Promise<GoogleUserProfile> => {
+  // 1. Thử đăng nhập trực tiếp qua Firebase Authentication popup
+  try {
+    const provider = new GoogleAuthProvider();
+    provider.setCustomParameters({ prompt: 'select_account' });
+    const userCredential = await signInWithPopup(auth, provider);
+    const u = userCredential.user;
+    return {
+      email: (u.email || '').toLowerCase().trim(),
+      name: u.displayName || (u.email ? u.email.split('@')[0] : 'Quản trị viên'),
+      picture: u.photoURL || undefined,
+      email_verified: Boolean(u.emailVerified),
+      uid: u.uid
+    };
+  } catch (popupErr: any) {
+    const code = popupErr?.code || '';
+    if (code === 'auth/popup-blocked') {
+      throw new Error(
+        'POPUP_BLOCKED: Trình duyệt đang chặn cửa sổ Popup. Vui lòng cho phép mở popup trên thanh địa chỉ của trình duyệt hoặc sử dụng nút Đăng nhập chính thức phía dưới.'
+      );
+    }
+    if (code === 'auth/popup-closed-by-user') {
+      throw new Error('Người dùng đã hủy hoặc đóng cửa sổ đăng nhập Google.');
+    }
+
+    console.warn('[Firebase popup fallback to GIS]:', popupErr?.message || popupErr);
+  }
+
+  // 2. Dự phòng qua Google Identity Services (GIS Token Client)
   const effectiveClientId = clientId?.trim() || DEFAULT_GOOGLE_CLIENT_ID;
 
   return new Promise((resolve, reject) => {
@@ -184,7 +227,8 @@ export const signInWithGoogleOAuth = async (clientId?: string): Promise<GoogleUs
               email: profile.email.toLowerCase().trim(),
               name: profile.name || profile.email.split('@')[0],
               picture: profile.picture,
-              email_verified: Boolean(profile.email_verified)
+              email_verified: Boolean(profile.email_verified),
+              uid: profile.sub || auth.currentUser?.uid
             });
           } catch (err: any) {
             reject(new Error(`Không thể lấy thông tin người dùng Google: ${err.message}`));
