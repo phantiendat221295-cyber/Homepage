@@ -65,6 +65,20 @@
         "isImportant": { "type": "boolean" }
       },
       "required": ["title", "date"]
+    },
+    "AdminUser": {
+      "title": "AdminUser",
+      "description": "Tài khoản người dùng có quyền Quản trị viên (Admin)",
+      "type": "object",
+      "properties": {
+        "email": { "type": "string", "maxLength": 100 },
+        "name": { "type": "string", "maxLength": 100 },
+        "role": { "type": "string", "enum": ["admin", "user"] },
+        "isSuperAdmin": { "type": "boolean" },
+        "addedAt": { "type": "string", "maxLength": 50 },
+        "addedBy": { "type": "string", "maxLength": 100 }
+      },
+      "required": ["email", "role"]
     }
   },
   "firestore": {
@@ -83,6 +97,10 @@
     "/notifications/{notificationId}": {
       "schema": "Notification",
       "description": "Danh sách các thông báo đào tạo"
+    },
+    "/admin_users/{adminId}": {
+      "schema": "AdminUser",
+      "description": "Danh sách tài khoản Quản trị viên được cấp quyền"
     }
   }
 }

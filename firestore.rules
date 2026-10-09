@@ -22,5 +22,10 @@ service cloud.firestore {
     match /notifications/{notificationId} {
       allow read, write: if true;
     }
+
+    // Danh sách phân quyền Quản trị viên (Admin)
+    match /admin_users/{adminId} {
+      allow read, write: if true;
+    }
   }
 }

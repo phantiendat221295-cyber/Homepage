@@ -33,10 +33,13 @@ export interface QuickToolItem {
 
 export interface AdminAccount {
   email: string;
-  passwordOrPin: string;
+  passwordOrPin?: string;
   name: string;
   role: 'admin' | 'user';
   avatar?: string;
+  isSuperAdmin?: boolean;
+  addedAt?: string;
+  addedBy?: string;
 }
 
 export interface SupportTicket {

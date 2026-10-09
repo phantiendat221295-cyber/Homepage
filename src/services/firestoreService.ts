@@ -13,7 +13,7 @@ import {
   getDocFromServer
 } from 'firebase/firestore';
 import { db, auth } from './firebase';
-import { WebAppItem, NotificationItem, SupportTicket, GoogleSheetsConfig } from '../types';
+import { WebAppItem, NotificationItem, SupportTicket, GoogleSheetsConfig, AdminAccount } from '../types';
 
 export enum OperationType {
   CREATE = 'create',
@@ -363,5 +363,173 @@ export async function saveNotificationsToFirestore(notis: NotificationItem[]): P
     await batch.commit();
   } catch (error) {
     handleFirestoreError(error, OperationType.WRITE, NOTIFICATIONS_COLLECTION);
+  }
+}
+
+// ==========================================
+// 4. QUẢN LÝ PHÂN QUYỀN ADMIN (COLLECTION: admin_users)
+// ==========================================
+
+export const ADMINS_COLLECTION = 'admin_users';
+
+// Danh sách Quản trị viên cấp cao mặc định của hệ thống
+export const SYSTEM_SUPER_ADMINS = ['datpt60@fpt.edu.vn', 'phantiendat221295@gmail.com'];
+
+export const getAdminDocId = (email: string) => {
+  return email.toLowerCase().trim().replace(/[^a-zA-Z0-9]/g, '_');
+};
+
+/**
+ * Kiểm tra xem một email có quyền admin hay không (dựa trên Super Admin hoặc danh sách Firestore)
+ */
+export function checkIsAdmin(email: string, activeAdmins: AdminAccount[]): boolean {
+  if (!email || !email.trim()) return false;
+  const clean = email.toLowerCase().trim();
+  if (SYSTEM_SUPER_ADMINS.map((e) => e.toLowerCase().trim()).includes(clean)) {
+    return true;
+  }
+  return activeAdmins.some(
+    (a) => a.email.toLowerCase().trim() === clean && (a.role === 'admin' || !a.role)
+  );
+}
+
+/**
+ * Lấy danh sách Quản trị viên từ Firestore
+ */
+export async function getAdminUsersFromFirestore(): Promise<AdminAccount[]> {
+  try {
+    const colRef = collection(db, ADMINS_COLLECTION);
+    const snapshot = await getDocs(colRef);
+    const items: AdminAccount[] = [];
+    snapshot.forEach((snap) => {
+      const data = snap.data() as AdminAccount;
+      items.push({
+        ...data,
+        isSuperAdmin: SYSTEM_SUPER_ADMINS.includes(data.email.toLowerCase().trim())
+      });
+    });
+    return items;
+  } catch (error) {
+    handleFirestoreError(error, OperationType.LIST, ADMINS_COLLECTION);
+    return [];
+  }
+}
+
+/**
+ * Lắng nghe danh sách Quản trị viên theo thời gian thực (Realtime onSnapshot)
+ */
+export function subscribeAdminUsers(
+  onUpdate: (admins: AdminAccount[]) => void,
+  onError?: (err: any) => void
+): () => void {
+  const colRef = collection(db, ADMINS_COLLECTION);
+  return onSnapshot(
+    colRef,
+    (snapshot) => {
+      const items: AdminAccount[] = [];
+      snapshot.forEach((snap) => {
+        const data = snap.data() as AdminAccount;
+        items.push({
+          ...data,
+          isSuperAdmin: SYSTEM_SUPER_ADMINS.includes(data.email.toLowerCase().trim())
+        });
+      });
+      onUpdate(items);
+    },
+    (error) => {
+      handleFirestoreError(error, OperationType.GET, ADMINS_COLLECTION);
+      if (onError) onError(error);
+    }
+  );
+}
+
+/**
+ * Thêm một email Quản trị viên vào Firestore
+ */
+export async function addAdminUserToFirestore(admin: {
+  email: string;
+  name?: string;
+  addedBy?: string;
+}): Promise<void> {
+  const cleanEmail = admin.email.toLowerCase().trim();
+  const docId = getAdminDocId(cleanEmail);
+  const docRef = doc(db, ADMINS_COLLECTION, docId);
+
+  const payload: AdminAccount = {
+    email: cleanEmail,
+    name: admin.name || cleanEmail.split('@')[0],
+    role: 'admin',
+    isSuperAdmin: SYSTEM_SUPER_ADMINS.includes(cleanEmail),
+    addedAt: new Date().toISOString(),
+    addedBy: admin.addedBy || 'Quản trị viên'
+  };
+
+  try {
+    await setDoc(docRef, sanitizeData(payload), { merge: true });
+  } catch (error) {
+    handleFirestoreError(error, OperationType.WRITE, `${ADMINS_COLLECTION}/${docId}`);
+    throw error;
+  }
+}
+
+/**
+ * Xóa/Thu hồi quyền Quản trị viên của một email khỏi Firestore
+ */
+export async function removeAdminUserFromFirestore(email: string): Promise<void> {
+  const cleanEmail = email.toLowerCase().trim();
+  if (SYSTEM_SUPER_ADMINS.includes(cleanEmail)) {
+    throw new Error('Không thể thu hồi quyền của Chủ sở hữu hệ thống (Super Admin)!');
+  }
+  const docId = getAdminDocId(cleanEmail);
+  const docRef = doc(db, ADMINS_COLLECTION, docId);
+
+  try {
+    await deleteDoc(docRef);
+  } catch (error) {
+    handleFirestoreError(error, OperationType.DELETE, `${ADMINS_COLLECTION}/${docId}`);
+    throw error;
+  }
+}
+
+/**
+ * Khởi tạo 2 Super Admin mặc định lên Firestore nếu chưa có
+ */
+export async function seedInitialAdminsIfEmpty(): Promise<AdminAccount[]> {
+  try {
+    const existing = await getAdminUsersFromFirestore();
+    const batch = writeBatch(db);
+    let needCommit = false;
+
+    for (const email of SYSTEM_SUPER_ADMINS) {
+      const clean = email.toLowerCase().trim();
+      const has = existing.some((a) => a.email.toLowerCase().trim() === clean);
+      if (!has) {
+        needCommit = true;
+        const docRef = doc(db, ADMINS_COLLECTION, getAdminDocId(clean));
+        batch.set(docRef, {
+          email: clean,
+          name: clean === 'datpt60@fpt.edu.vn' ? 'Phan Tiến Đạt (Đào tạo)' : 'Phan Tiến Đạt',
+          role: 'admin',
+          isSuperAdmin: true,
+          addedAt: new Date().toISOString(),
+          addedBy: 'Hệ thống'
+        });
+      }
+    }
+
+    if (needCommit) {
+      await batch.commit();
+      return await getAdminUsersFromFirestore();
+    }
+
+    return existing;
+  } catch (error) {
+    console.warn('Lỗi seed initial admins:', error);
+    return SYSTEM_SUPER_ADMINS.map((email) => ({
+      email,
+      name: email.split('@')[0],
+      role: 'admin',
+      isSuperAdmin: true
+    }));
   }
 }

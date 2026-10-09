@@ -19,6 +19,9 @@ import {
   Clock,
   RefreshCw,
   Sparkles,
+  UserCheck,
+  UserX,
+  ShieldAlert,
   X
 } from 'lucide-react';
 import { DynamicIcon } from './DynamicIcon';
@@ -41,6 +44,9 @@ interface RoleManagementViewProps {
   tickets: SupportTicket[];
   onUpdateTicketStatus: (ticketId: string, status: 'new' | 'resolved') => void;
   onDeleteTicket?: (ticketId: string) => void;
+  adminUsers?: AdminAccount[];
+  onAddAdminUser?: (email: string, name?: string) => Promise<void>;
+  onRemoveAdminUser?: (email: string) => Promise<void>;
   onSyncNow?: () => Promise<void> | void;
   isSyncing?: boolean;
   googleClientId?: string;
@@ -65,6 +71,9 @@ export const RoleManagementView: React.FC<RoleManagementViewProps> = ({
   tickets,
   onUpdateTicketStatus,
   onDeleteTicket,
+  adminUsers = [],
+  onAddAdminUser,
+  onRemoveAdminUser,
   onSyncNow,
   isSyncing = false,
   googleClientId,
@@ -82,8 +91,15 @@ export const RoleManagementView: React.FC<RoleManagementViewProps> = ({
   const [showAlternateEmailInput, setShowAlternateEmailInput] = useState(false);
   const [alternateEmail, setAlternateEmail] = useState('');
 
-  // Admin view tab: 'apps' or 'tickets'
-  const [adminTab, setAdminTab] = useState<'apps' | 'tickets'>('apps');
+  // Admin view tab: 'apps' | 'tickets' | 'admins'
+  const [adminTab, setAdminTab] = useState<'apps' | 'tickets' | 'admins'>('apps');
+
+  // Admin Management Form State
+  const [newAdminEmail, setNewAdminEmail] = useState('');
+  const [newAdminName, setNewAdminName] = useState('');
+  const [isAddingAdmin, setIsAddingAdmin] = useState(false);
+  const [adminActionError, setAdminActionError] = useState<string | null>(null);
+  const [adminActionSuccess, setAdminActionSuccess] = useState<string | null>(null);
 
   // Search in table
   const [searchTerm, setSearchTerm] = useState('');
@@ -179,6 +195,42 @@ export const RoleManagementView: React.FC<RoleManagementViewProps> = ({
       setLoginError(err.message || 'Lỗi xác thực email Google.');
     } finally {
       setIsLoggingIn(false);
+    }
+  };
+
+  const handleAddAdminSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newAdminEmail.trim() || !onAddAdminUser) return;
+    setIsAddingAdmin(true);
+    setAdminActionError(null);
+    setAdminActionSuccess(null);
+    try {
+      await onAddAdminUser(newAdminEmail.trim(), newAdminName.trim());
+      setAdminActionSuccess(`Đã cấp quyền Quản trị viên cho "${newAdminEmail.trim()}" thành công!`);
+      setNewAdminEmail('');
+      setNewAdminName('');
+    } catch (err: any) {
+      setAdminActionError(err.message || 'Lỗi khi cấp quyền Admin');
+    } finally {
+      setIsAddingAdmin(false);
+    }
+  };
+
+  const handleRemoveAdminClick = async (email: string) => {
+    if (!onRemoveAdminUser) return;
+    if (
+      window.confirm(
+        `Bạn có chắc chắn muốn thu hồi quyền Admin của "${email}"? Tài khoản này sẽ bị hủy quyền ngay sau 30 giây hoặc khi họ tải lại trang.`
+      )
+    ) {
+      setAdminActionError(null);
+      setAdminActionSuccess(null);
+      try {
+        await onRemoveAdminUser(email);
+        setAdminActionSuccess(`Đã thu hồi quyền Quản trị viên của "${email}" thành công!`);
+      } catch (err: any) {
+        setAdminActionError(err.message || 'Lỗi khi thu hồi quyền Admin');
+      }
     }
   };
 
@@ -285,6 +337,18 @@ export const RoleManagementView: React.FC<RoleManagementViewProps> = ({
                   {newTicketsCount} mới
                 </span>
               )}
+            </button>
+
+            <button
+              onClick={() => setAdminTab('admins')}
+              className={`px-4 py-2 rounded-xl font-bold text-xs sm:text-sm transition-all cursor-pointer flex items-center gap-2 ${
+                adminTab === 'admins'
+                  ? 'bg-blue-600 text-white shadow-xs'
+                  : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+              }`}
+            >
+              <ShieldCheck size={16} />
+              <span>Phân Quyền Admin ({adminUsers.length})</span>
             </button>
           </div>
 
@@ -540,6 +604,236 @@ export const RoleManagementView: React.FC<RoleManagementViewProps> = ({
                   ))}
                 </div>
               )}
+            </div>
+          )}
+
+          {/* TAB 3: PHÂN QUYỀN & QUẢN LÝ TÀI KHOẢN ADMIN */}
+          {adminTab === 'admins' && (
+            <div className="bg-white rounded-3xl p-6 border border-slate-200 shadow-xs space-y-6">
+              {/* Header */}
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-slate-100">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-2xl bg-indigo-50 text-indigo-600 flex items-center justify-center shrink-0">
+                    <ShieldCheck size={22} />
+                  </div>
+                  <div>
+                    <h3 className="font-bold text-slate-800 text-lg">
+                      Quản Lý Phân Quyền Quản Trị Viên (Firestore Cloud)
+                    </h3>
+                    <p className="text-xs text-slate-500">
+                      Cấp hoặc thu hồi quyền Admin trực tiếp trên hệ thống đám mây mà không cần sửa code hay Google Sheets
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-emerald-100 text-emerald-800 border border-emerald-200">
+                    <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+                    Đồng bộ thời gian thực & Kiểm tra 30s
+                  </span>
+                </div>
+              </div>
+
+              {/* Thông báo kết quả thao tác */}
+              {adminActionSuccess && (
+                <div className="p-3.5 bg-emerald-50 border border-emerald-200 text-emerald-800 rounded-2xl text-xs sm:text-sm font-semibold flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <Check size={16} className="text-emerald-600 shrink-0" />
+                    <span>{adminActionSuccess}</span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setAdminActionSuccess(null)}
+                    className="text-emerald-600 hover:text-emerald-800 p-1 cursor-pointer"
+                  >
+                    <X size={14} />
+                  </button>
+                </div>
+              )}
+
+              {adminActionError && (
+                <div className="p-3.5 bg-rose-50 border border-rose-200 text-rose-800 rounded-2xl text-xs sm:text-sm font-semibold flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <AlertCircle size={16} className="text-rose-600 shrink-0" />
+                    <span>{adminActionError}</span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setAdminActionError(null)}
+                    className="text-rose-600 hover:text-rose-800 p-1 cursor-pointer"
+                  >
+                    <X size={14} />
+                  </button>
+                </div>
+              )}
+
+              {/* Form Cấp Quyền Admin Mới */}
+              <div className="p-5 bg-gradient-to-r from-blue-50/70 to-indigo-50/50 rounded-2xl border border-blue-200/80 space-y-3">
+                <div className="flex items-center gap-2 font-bold text-xs sm:text-sm text-blue-900">
+                  <UserCheck size={16} className="text-blue-600" />
+                  <span>Cấp quyền Quản trị viên mới</span>
+                </div>
+                <p className="text-xs text-slate-600">
+                  Nhập email Google hoặc email FPT của cán bộ/giảng viên để cấp toàn quyền quản trị (Thêm, sửa, xóa webapp, tiếp nhận yêu cầu hỗ trợ).
+                </p>
+
+                <form onSubmit={handleAddAdminSubmit} className="flex flex-col sm:flex-row gap-3 pt-1">
+                  <input
+                    type="email"
+                    required
+                    value={newAdminEmail}
+                    onChange={(e) => setNewAdminEmail(e.target.value)}
+                    placeholder="Nhập email: vidu@fpt.edu.vn hoặc gmail..."
+                    className="flex-1 bg-white border border-blue-300 rounded-xl px-3.5 py-2.5 text-xs sm:text-sm text-slate-800 focus:outline-none focus:border-blue-500 shadow-2xs"
+                  />
+                  <input
+                    type="text"
+                    value={newAdminName}
+                    onChange={(e) => setNewAdminName(e.target.value)}
+                    placeholder="Họ tên hiển thị (tùy chọn)"
+                    className="sm:w-56 bg-white border border-blue-300 rounded-xl px-3.5 py-2.5 text-xs sm:text-sm text-slate-800 focus:outline-none focus:border-blue-500 shadow-2xs"
+                  />
+                  <button
+                    type="submit"
+                    disabled={isAddingAdmin}
+                    className="px-5 py-2.5 bg-blue-600 hover:bg-blue-700 active:bg-blue-800 text-white rounded-xl text-xs sm:text-sm font-bold transition-all shadow-xs flex items-center justify-center gap-2 cursor-pointer disabled:opacity-60 shrink-0"
+                  >
+                    <Plus size={16} />
+                    <span>{isAddingAdmin ? 'Đang thêm...' : '+ Cấp quyền Admin'}</span>
+                  </button>
+                </form>
+              </div>
+
+              {/* Danh Sách Quản Trị Viên Hiện Tại */}
+              <div className="space-y-3">
+                <div className="flex items-center justify-between">
+                  <h4 className="text-xs sm:text-sm font-bold text-slate-800">
+                    Danh sách Quản trị viên hiện hành ({adminUsers.length} tài khoản)
+                  </h4>
+                  <span className="text-[11px] text-slate-500">
+                    Cập nhật tự động lên Cloud Firestore
+                  </span>
+                </div>
+
+                <div className="overflow-x-auto rounded-2xl border border-slate-200">
+                  <table className="w-full text-left border-collapse text-xs sm:text-sm">
+                    <thead>
+                      <tr className="bg-slate-50 text-slate-600 font-bold border-b border-slate-200">
+                        <th className="py-3 px-4">Tài khoản Quản trị</th>
+                        <th className="py-3 px-4">Cấp bậc / Quyền hạn</th>
+                        <th className="py-3 px-4">Thời gian cấp</th>
+                        <th className="py-3 px-4 text-right">Thao tác</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100 text-slate-700">
+                      {adminUsers.map((admin) => {
+                        const isSuper =
+                          admin.isSuperAdmin ||
+                          ['datpt60@fpt.edu.vn', 'phantiendat221295@gmail.com'].includes(
+                            admin.email.toLowerCase().trim()
+                          );
+
+                        return (
+                          <tr key={admin.email} className="hover:bg-slate-50/80 transition-colors">
+                            <td className="py-3 px-4">
+                              <div className="flex items-center gap-2.5">
+                                <div
+                                  className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 font-bold text-xs ${
+                                    isSuper
+                                      ? 'bg-amber-100 text-amber-800 border border-amber-300'
+                                      : 'bg-blue-100 text-blue-800 border border-blue-200'
+                                  }`}
+                                >
+                                  {admin.name ? admin.name.charAt(0).toUpperCase() : 'A'}
+                                </div>
+                                <div>
+                                  <div className="font-bold text-slate-800 flex items-center gap-1.5">
+                                    <span>{admin.name || admin.email}</span>
+                                    {isSuper && (
+                                      <span className="px-1.5 py-0.2 bg-amber-500 text-white text-[10px] font-black rounded-md">
+                                        SUPER
+                                      </span>
+                                    )}
+                                  </div>
+                                  <span className="text-xs text-slate-500 font-mono">
+                                    {admin.email}
+                                  </span>
+                                </div>
+                              </div>
+                            </td>
+
+                            <td className="py-3 px-4">
+                              {isSuper ? (
+                                <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-bold bg-amber-100 text-amber-800 border border-amber-200">
+                                  <span className="w-1.5 h-1.5 rounded-full bg-amber-500" />
+                                  Chủ sở hữu hệ thống (Cố định)
+                                </span>
+                              ) : (
+                                <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-semibold bg-blue-100 text-blue-800 border border-blue-200">
+                                  <span className="w-1.5 h-1.5 rounded-full bg-blue-500" />
+                                  Quản trị viên (Admin)
+                                </span>
+                              )}
+                            </td>
+
+                            <td className="py-3 px-4 text-xs text-slate-500">
+                              {admin.addedAt
+                                ? new Date(admin.addedAt).toLocaleDateString('vi-VN', {
+                                    hour: '2-digit',
+                                    minute: '2-digit',
+                                    day: '2-digit',
+                                    month: '2-digit',
+                                    year: 'numeric'
+                                  })
+                                : 'Mặc định ban đầu'}
+                            </td>
+
+                            <td className="py-3 px-4 text-right">
+                              {isSuper ? (
+                                <span
+                                  title="Tài khoản Chủ sở hữu tối cao luôn duy trì quyền quản trị"
+                                  className="text-xs text-slate-400 font-medium italic cursor-default"
+                                >
+                                  Không thể xóa
+                                </span>
+                              ) : (
+                                <button
+                                  type="button"
+                                  onClick={() => handleRemoveAdminClick(admin.email)}
+                                  className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-xl bg-rose-50 hover:bg-rose-100 text-rose-700 font-semibold text-xs border border-rose-200 transition-colors cursor-pointer"
+                                  title="Thu hồi quyền quản trị của tài khoản này"
+                                >
+                                  <UserX size={13} />
+                                  <span>Thu hồi quyền</span>
+                                </button>
+                              )}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+              {/* Hộp Giải Thích An Toàn / Security Notice */}
+              <div className="p-4 bg-slate-50 rounded-2xl border border-slate-200 text-xs text-slate-600 space-y-1.5 leading-relaxed">
+                <div className="font-bold text-slate-800 flex items-center gap-1.5">
+                  <ShieldAlert size={15} className="text-amber-600" />
+                  <span>Cơ chế bảo vệ & Thu hồi quyền tự động</span>
+                </div>
+                <ul className="list-disc pl-5 space-y-1 text-slate-600">
+                  <li>
+                    <strong>Khi bạn bấm "Thu hồi quyền":</strong> Email sẽ bị xóa ngay khỏi Firestore. Nếu người đó đang mở tab trình duyệt, hệ thống sẽ tự động tước quyền Admin trong vòng <strong>tối đa 30 giây</strong> (hoặc ngay khi họ reload lại trang).
+                  </li>
+                  <li>
+                    <strong>Chủ sở hữu tối cao:</strong> Hai tài khoản <code className="bg-slate-200 px-1 py-0.5 rounded text-slate-800 font-mono font-bold">datpt60@fpt.edu.vn</code> và <code className="bg-slate-200 px-1 py-0.5 rounded text-slate-800 font-mono font-bold">phantiendat221295@gmail.com</code> được bảo vệ vĩnh viễn trong hệ thống và không thể bị người khác xóa bỏ.
+                  </li>
+                  <li>
+                    <strong>Tiện lợi tuyệt đối:</strong> Bạn có thể phân quyền cho bất kỳ ai trực tiếp trên màn hình này mà không cần sửa code <code className="bg-slate-200 px-1 py-0.5 rounded text-slate-800 font-mono">App.tsx</code> hay Google Sheets.
+                  </li>
+                </ul>
+              </div>
             </div>
           )}
         </div>

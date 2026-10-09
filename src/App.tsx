@@ -36,7 +36,14 @@ import {
   deleteTicketFromFirestore,
   getPortalConfigFromFirestore,
   savePortalConfigToFirestore,
-  testFirestoreConnection
+  testFirestoreConnection,
+  subscribeAdminUsers,
+  getAdminUsersFromFirestore,
+  addAdminUserToFirestore,
+  removeAdminUserFromFirestore,
+  seedInitialAdminsIfEmpty,
+  checkIsAdmin,
+  SYSTEM_SUPER_ADMINS
 } from './services/firestoreService';
 import { signInWithGoogleOAuth } from './services/googleAuthService';
 import { SearchX, Filter, Plus, ShieldCheck, X, Check, Edit3, ShieldAlert, LogOut, FileSpreadsheet, Inbox, Cloud } from 'lucide-react';
@@ -51,6 +58,16 @@ export default function App() {
       // ignore
     }
     return null;
+  });
+
+  // Admin Users List from Firestore
+  const [adminUsers, setAdminUsers] = useState<AdminAccount[]>(() => {
+    return SYSTEM_SUPER_ADMINS.map((email) => ({
+      email,
+      name: email === 'datpt60@fpt.edu.vn' ? 'Phan Tiến Đạt (Đào tạo)' : 'Phan Tiến Đạt',
+      role: 'admin',
+      isSuperAdmin: true
+    }));
   });
 
   // Current Role
@@ -199,6 +216,18 @@ export default function App() {
     }
   };
 
+  // Hàm tước quyền Admin và đưa về quyền Người dùng thường
+  const revokeAdminSession = (reason: string) => {
+    setCurrentAdminUser(null);
+    try {
+      sessionStorage.removeItem('fpt_portal_admin_user');
+    } catch {
+      // ignore
+    }
+    setActiveTab('home');
+    showToast(reason);
+  };
+
   // Tự động nạp dữ liệu từ Firestore và lắng nghe thời gian thực khi load trang
   useEffect(() => {
     // 1. Kiểm tra kết nối Firestore
@@ -243,9 +272,72 @@ export default function App() {
       }
     }).catch(() => null);
 
+    // 5. Khởi tạo & Lắng nghe danh sách Quản trị viên từ Firestore
+    seedInitialAdminsIfEmpty().then((initialAdmins) => {
+      setAdminUsers(initialAdmins);
+
+      // KIỂM TRA NGAY KHI TẢI LẠI TRANG (RELOAD):
+      // Nếu email trong sessionStorage không còn nằm trong danh sách Admin hợp lệ -> HỦY QUYỀN NGAY!
+      const savedUserRaw = sessionStorage.getItem('fpt_portal_admin_user');
+      if (savedUserRaw) {
+        try {
+          const savedUser = JSON.parse(savedUserRaw);
+          if (savedUser && savedUser.email) {
+            const isAuthorized = checkIsAdmin(savedUser.email, initialAdmins);
+            if (!isAuthorized) {
+              revokeAdminSession(`Tài khoản "${savedUser.email}" đã bị thu hồi quyền Admin.`);
+            }
+          }
+        } catch {
+          // ignore
+        }
+      }
+    });
+
+    // Lắng nghe thay đổi danh sách Quản trị viên thời gian thực
+    const unsubscribeAdmins = subscribeAdminUsers((latestAdmins) => {
+      setAdminUsers(latestAdmins);
+      const savedUserRaw = sessionStorage.getItem('fpt_portal_admin_user');
+      if (savedUserRaw) {
+        try {
+          const savedUser = JSON.parse(savedUserRaw);
+          if (savedUser && savedUser.email) {
+            const isAuthorized = checkIsAdmin(savedUser.email, latestAdmins);
+            if (!isAuthorized) {
+              revokeAdminSession(`Quyền Quản trị viên của tài khoản "${savedUser.email}" đã bị thu hồi.`);
+            }
+          }
+        } catch {
+          // ignore
+        }
+      }
+    });
+
+    // 6. KIỂM TRA ĐỊNH KỲ CỨ SAU MỖI 30 GIÂY
+    // Tự động kiểm tra quyền Admin ngầm mỗi 30 giây để tránh admin bị xóa tiếp tục thao tác
+    const adminCheckInterval = setInterval(async () => {
+      const savedUserRaw = sessionStorage.getItem('fpt_portal_admin_user');
+      if (savedUserRaw) {
+        try {
+          const savedUser = JSON.parse(savedUserRaw);
+          if (savedUser && savedUser.email) {
+            const currentAdmins = await getAdminUsersFromFirestore();
+            const isAuthorized = checkIsAdmin(savedUser.email, currentAdmins);
+            if (!isAuthorized) {
+              revokeAdminSession(`Tài khoản "${savedUser.email}" đã hết hạn quyền Admin.`);
+            }
+          }
+        } catch {
+          // ignore
+        }
+      }
+    }, 30000);
+
     return () => {
       unsubscribeApps();
       unsubscribeTickets();
+      unsubscribeAdmins();
+      clearInterval(adminCheckInterval);
     };
   }, []);
 
@@ -301,7 +393,7 @@ export default function App() {
       const matched = accounts.find(
         (acc) =>
           acc.email.toLowerCase().trim() === cleanEmail &&
-          acc.passwordOrPin.trim() === cleanPin &&
+          acc.passwordOrPin?.trim() === cleanPin &&
           acc.role === 'admin'
       );
 
@@ -327,7 +419,7 @@ export default function App() {
     // Mở Popup Google chính thức với consent screen
     const googleProfile = await signInWithGoogleOAuth(clientId);
 
-    // Xác thực email với danh sách Admin trong Google Sheet
+    // Xác thực email với Firestore Admin List hoặc Google Sheet
     const permissionsUrl = sheetConfig.permissionsCsvUrl || DEFAULT_SHEET_CONFIG.permissionsCsvUrl;
     let accounts: AdminAccount[] = [];
 
@@ -340,18 +432,24 @@ export default function App() {
     }
 
     const cleanEmail = googleProfile.email.toLowerCase().trim();
+    const isAuthorized = checkIsAdmin(cleanEmail, adminUsers);
     const matched = accounts.find(
       (acc) => acc.email.toLowerCase().trim() === cleanEmail && acc.role === 'admin'
     );
-    const isOwner = cleanEmail === 'datpt60@fpt.edu.vn' || cleanEmail === 'phantiendat221295@gmail.com';
 
-    if (matched || isOwner) {
+    if (isAuthorized || matched) {
+      const foundInFirestore = adminUsers.find(
+        (a) => a.email.toLowerCase().trim() === cleanEmail
+      );
+      const isSuper = SYSTEM_SUPER_ADMINS.map((e) => e.toLowerCase().trim()).includes(cleanEmail);
+
       const adminAcc: AdminAccount = {
         email: googleProfile.email,
         passwordOrPin: '',
-        name: googleProfile.name || matched?.name || 'Quản trị viên Google',
+        name: googleProfile.name || foundInFirestore?.name || matched?.name || 'Quản trị viên Google',
         role: 'admin',
-        avatar: googleProfile.picture
+        avatar: googleProfile.picture,
+        isSuperAdmin: isSuper
       };
 
       setCurrentAdminUser(adminAcc);
@@ -360,12 +458,12 @@ export default function App() {
       return true;
     } else {
       throw new Error(
-        `Tài khoản Google "${googleProfile.email}" không nằm trong danh sách phân quyền Admin của Google Sheets!`
+        `Tài khoản Google "${googleProfile.email}" không nằm trong danh sách Quản trị viên được cấp quyền!`
       );
     }
   };
 
-  // CHỨC NĂNG 2: XÁC THỰC EMAIL QUẢN TRỊ VIÊN ĐỐI SOÁT VỚI GOOGLE SHEETS
+  // CHỨC NĂNG 2: XÁC THỰC EMAIL QUẢN TRỊ VIÊN ĐỐI SOÁT VỚI FIRESTORE & GOOGLE SHEETS
   const handleLoginWithGoogleEmail = async (googleEmail: string): Promise<boolean> => {
     const permissionsUrl = sheetConfig.permissionsCsvUrl || DEFAULT_SHEET_CONFIG.permissionsCsvUrl;
     let accounts: AdminAccount[] = [];
@@ -379,17 +477,23 @@ export default function App() {
     }
 
     const cleanInput = googleEmail.toLowerCase().trim();
+    const isAuthorized = checkIsAdmin(cleanInput, adminUsers);
     const matchedFromSheet = accounts.find(
       (acc) => acc.email.toLowerCase().trim() === cleanInput && acc.role === 'admin'
     );
-    const isOwner = cleanInput === 'datpt60@fpt.edu.vn' || cleanInput === 'phantiendat221295@gmail.com';
 
-    if (matchedFromSheet || isOwner) {
+    if (isAuthorized || matchedFromSheet) {
+      const foundInFirestore = adminUsers.find(
+        (a) => a.email.toLowerCase().trim() === cleanInput
+      );
+      const isSuper = SYSTEM_SUPER_ADMINS.map((e) => e.toLowerCase().trim()).includes(cleanInput);
+
       const adminAcc: AdminAccount = matchedFromSheet || {
         email: googleEmail,
         passwordOrPin: '',
-        name: 'Quản trị viên Đào tạo (Google)',
-        role: 'admin'
+        name: foundInFirestore?.name || (isSuper ? 'Quản trị viên Cấp cao' : 'Quản trị viên Đào tạo (Google)'),
+        role: 'admin',
+        isSuperAdmin: isSuper
       };
 
       setCurrentAdminUser(adminAcc);
@@ -399,6 +503,25 @@ export default function App() {
     }
 
     return false;
+  };
+
+  // CHỨC NĂNG: CẤP & THU HỒI QUYỀN ADMIN TRỰC TIẾP TRÊN FIRESTORE
+  const handleAddAdminUser = async (email: string, name?: string) => {
+    await addAdminUserToFirestore({
+      email,
+      name,
+      addedBy: currentAdminUser?.name || 'Super Admin'
+    });
+    showToast(`Đã cấp quyền Quản trị viên cho "${email}"!`);
+  };
+
+  const handleRemoveAdminUser = async (email: string) => {
+    await removeAdminUserFromFirestore(email);
+    if (currentAdminUser?.email?.toLowerCase().trim() === email.toLowerCase().trim()) {
+      revokeAdminSession('Bạn đã tự thu hồi quyền Admin của chính tài khoản này.');
+    } else {
+      showToast(`Đã thu hồi quyền Quản trị viên của "${email}"!`);
+    }
   };
 
   // ADMIN LOGOUT
@@ -649,6 +772,9 @@ export default function App() {
             tickets={tickets}
             onUpdateTicketStatus={handleUpdateTicketStatus}
             onDeleteTicket={handleDeleteTicket}
+            adminUsers={adminUsers}
+            onAddAdminUser={handleAddAdminUser}
+            onRemoveAdminUser={handleRemoveAdminUser}
             onSyncNow={() => syncDataFromSheets(sheetConfig)}
             isSyncing={isSyncing}
             googleClientId={sheetConfig.googleClientId}
