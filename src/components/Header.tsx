@@ -11,6 +11,7 @@ interface HeaderProps {
   onRefreshData?: () => void;
   isSyncing?: boolean;
   currentRole: 'user' | 'admin';
+  isSuperAdmin?: boolean;
   onToggleRole: () => void;
   customLogoUrl?: string;
   campusName?: string;
@@ -24,6 +25,7 @@ export const Header: React.FC<HeaderProps> = ({
   onOpenSheetConfig,
   isSyncing,
   currentRole,
+  isSuperAdmin = false,
   onToggleRole,
   customLogoUrl,
   campusName = 'ĐỒNG NAI'
@@ -67,14 +69,26 @@ export const Header: React.FC<HeaderProps> = ({
             }`}
           >
             <ShieldCheck size={18} className={activeTab === 'roles' ? 'text-[#0284C7]' : 'text-slate-500'} />
-            <span>Phân quyền Admin</span>
+            <span>
+              {currentRole === 'admin'
+                ? isSuperAdmin
+                  ? 'Phân quyền Admin'
+                  : 'Khu vực Admin'
+                : 'Đăng nhập Admin'}
+            </span>
             {currentRole === 'admin' ? (
-              <span className="text-[10px] bg-emerald-100 text-emerald-700 font-bold px-1.5 py-0.2 rounded-full border border-emerald-300">
-                Admin
-              </span>
+              isSuperAdmin ? (
+                <span className="text-[10px] bg-amber-100 text-amber-900 font-black px-1.5 py-0.2 rounded-full border border-amber-300">
+                  SUPER
+                </span>
+              ) : (
+                <span className="text-[10px] bg-emerald-100 text-emerald-700 font-bold px-1.5 py-0.2 rounded-full border border-emerald-300">
+                  Admin
+                </span>
+              )
             ) : (
-              <span className="text-[10px] bg-amber-100 text-amber-800 font-bold px-1.5 py-0.2 rounded-full border border-amber-200">
-                Cấp quyền
+              <span className="text-[10px] bg-blue-100 text-blue-800 font-bold px-1.5 py-0.2 rounded-full border border-blue-200">
+                OAuth 2.0
               </span>
             )}
             {activeTab === 'roles' && (

@@ -35,8 +35,7 @@ import {
 } from '../services/googleAuthService';
 import {
   DEFAULT_ADMIN_USERS,
-  SYSTEM_SUPER_ADMINS,
-  SYSTEM_ADMIN_EMAILS
+  SYSTEM_SUPER_ADMINS
 } from '../services/firestoreService';
 
 interface RoleManagementViewProps {
@@ -112,8 +111,21 @@ export const RoleManagementView: React.FC<RoleManagementViewProps> = ({
   // Google Sign-In container ref
   const googleBtnContainerRef = useRef<HTMLDivElement | null>(null);
 
-  // Admin view tab: 'admins' | 'apps' | 'tickets' | 'logo'
-  const [adminTab, setAdminTab] = useState<'admins' | 'apps' | 'tickets' | 'logo'>('admins');
+  // Xác định Super Admin (Chỉ duy nhất 2 email này có quyền xem, thêm hoặc xóa admin)
+  const isSuperAdmin =
+    Boolean(currentAdminUser?.isSuperAdmin) ||
+    SYSTEM_SUPER_ADMINS.includes((currentAdminUser?.email || '').toLowerCase().trim());
+
+  // Admin view tab: Super Admin mặc định mở 'admins', Admin thường mở 'apps'
+  const [adminTab, setAdminTab] = useState<'admins' | 'apps' | 'tickets' | 'logo'>(() => {
+    return isSuperAdmin ? 'admins' : 'apps';
+  });
+
+  useEffect(() => {
+    if (!isSuperAdmin && adminTab === 'admins') {
+      setAdminTab('apps');
+    }
+  }, [isSuperAdmin, adminTab]);
 
   // Custom Logo and Campus state
   const [logoInput, setLogoInput] = useState(customLogoUrl || '');
@@ -376,18 +388,23 @@ export const RoleManagementView: React.FC<RoleManagementViewProps> = ({
 
           {/* Sub Navigation */}
           <div className="flex items-center gap-2 sm:gap-3 border-b border-slate-200 pb-2 overflow-x-auto">
-            {/* TAB 1: PHÂN QUYỀN ADMIN */}
-            <button
-              onClick={() => setAdminTab('admins')}
-              className={`px-4 py-2.5 rounded-xl font-bold text-xs sm:text-sm transition-all cursor-pointer flex items-center gap-2 shrink-0 ${
-                adminTab === 'admins'
-                  ? 'bg-blue-600 text-white shadow-xs'
-                  : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-              }`}
-            >
-              <ShieldCheck size={16} />
-              <span>Phân Quyền Admin ({adminUsers.length})</span>
-            </button>
+            {/* TAB 1: PHÂN QUYỀN ADMIN - CHỈ HIỂN THỊ DUY NHẤT CHO 2 SUPER ADMIN */}
+            {isSuperAdmin && (
+              <button
+                onClick={() => setAdminTab('admins')}
+                className={`px-4 py-2.5 rounded-xl font-bold text-xs sm:text-sm transition-all cursor-pointer flex items-center gap-2 shrink-0 ${
+                  adminTab === 'admins'
+                    ? 'bg-blue-600 text-white shadow-xs'
+                    : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                }`}
+              >
+                <ShieldCheck size={16} />
+                <span>Phân Quyền Admin ({adminUsers.length})</span>
+                <span className="px-1.5 py-0.2 bg-amber-400 text-amber-950 text-[10px] font-black rounded-md">
+                  SUPER
+                </span>
+              </button>
+            )}
 
             {/* TAB 2: QUẢN LÝ TIỆN ÍCH */}
             <button
@@ -433,20 +450,25 @@ export const RoleManagementView: React.FC<RoleManagementViewProps> = ({
             </button>
           </div>
 
-          {/* NỘI DUNG TAB 1: PHÂN QUYỀN ADMIN TRONG CLOUD (CHỈ ADMIN MỚI THẤY) */}
-          {adminTab === 'admins' && (
+          {/* NỘI DUNG TAB 1: PHÂN QUYỀN ADMIN - CHỈ DUY NHẤT 2 SUPER ADMIN MỚI THẤY & THAO TÁC */}
+          {adminTab === 'admins' && isSuperAdmin && (
             <div className="bg-white rounded-3xl p-6 border border-slate-200 shadow-xs space-y-6">
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-slate-100">
                 <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 rounded-2xl bg-indigo-50 text-indigo-600 flex items-center justify-center shrink-0">
+                  <div className="w-10 h-10 rounded-2xl bg-amber-50 text-amber-600 flex items-center justify-center shrink-0">
                     <ShieldCheck size={22} />
                   </div>
                   <div>
-                    <h3 className="font-bold text-slate-800 text-lg">
-                      Quản Lý Phân Quyền Quản Trị Viên (Firestore Cloud)
-                    </h3>
-                    <p className="text-xs text-slate-500">
-                      Cấp hoặc thu hồi quyền Admin trực tiếp cho các tài khoản email Google
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <h3 className="font-bold text-slate-800 text-lg">
+                        Quản Lý Phân Quyền Quản Trị Viên (Khu Vực Super Admin)
+                      </h3>
+                      <span className="px-2 py-0.5 rounded-md bg-amber-100 text-amber-900 border border-amber-300 text-[11px] font-black uppercase">
+                        Super Admin Only
+                      </span>
+                    </div>
+                    <p className="text-xs text-slate-500 mt-0.5">
+                      Chỉ 2 Super Admin khởi tạo (<span className="font-mono text-slate-700 font-semibold">datpt60@fpt.edu.vn</span> & <span className="font-mono text-slate-700 font-semibold">phantiendat221295@gmail.com</span>) mới có quyền cấp hoặc thu hồi quyền Admin.
                     </p>
                   </div>
                 </div>
@@ -454,7 +476,7 @@ export const RoleManagementView: React.FC<RoleManagementViewProps> = ({
                 <div className="flex items-center gap-2">
                   <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-emerald-100 text-emerald-800 border border-emerald-200">
                     <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-                    Bảo mật thời gian thực
+                    Đồng bộ Cloud Firestore
                   </span>
                 </div>
               </div>
@@ -639,15 +661,21 @@ export const RoleManagementView: React.FC<RoleManagementViewProps> = ({
                             </td>
 
                             <td className="py-3 px-4 text-right">
-                              <button
-                                type="button"
-                                onClick={() => handleRemoveAdminClick(admin.email)}
-                                className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-xl bg-rose-50 hover:bg-rose-100 text-rose-700 font-semibold text-xs border border-rose-200 transition-colors cursor-pointer"
-                                title="Thu hồi quyền quản trị của tài khoản này"
-                              >
-                                <UserX size={13} />
-                                <span>Thu hồi quyền</span>
-                              </button>
+                              {isSuper ? (
+                                <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-xl bg-amber-50 text-amber-800 font-bold text-xs border border-amber-200">
+                                  Super Admin (Bảo vệ)
+                                </span>
+                              ) : (
+                                <button
+                                  type="button"
+                                  onClick={() => handleRemoveAdminClick(admin.email)}
+                                  className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-xl bg-rose-50 hover:bg-rose-100 text-rose-700 font-semibold text-xs border border-rose-200 transition-colors cursor-pointer"
+                                  title="Thu hồi quyền quản trị của tài khoản này"
+                                >
+                                  <UserX size={13} />
+                                  <span>Thu hồi quyền</span>
+                                </button>
+                              )}
                             </td>
                           </tr>
                         );
