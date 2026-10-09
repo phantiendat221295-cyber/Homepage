@@ -66,7 +66,7 @@ export const FptPolySchoolLogo: React.FC<FptPolySchoolLogoProps> = ({
       <div className={`flex items-center gap-3 select-none ${className}`}>
         <img
           src={customLogoUrl}
-          alt="FPT PolySchool Logo"
+          alt="FPT Polytechnic Logo"
           className="h-10 sm:h-11 w-auto object-contain max-w-[200px] drop-shadow-2xs"
           onError={() => setImgFailed(true)}
         />
@@ -97,13 +97,13 @@ export const FptPolySchoolLogo: React.FC<FptPolySchoolLogoProps> = ({
         <FptEmblem className="h-16 w-auto mb-2 drop-shadow-xs" />
         <div className="flex flex-col items-center text-center">
           <span
-            className="font-black text-[#F27123] text-2xl tracking-wide uppercase leading-tight"
+            className="font-black text-[#F27123] text-2xl tracking-wide uppercase leading-tight text-center"
             style={{ fontFamily: "'Rockwell', 'Roboto Slab', 'Georgia', serif" }}
           >
-            FPT POLYSCHOOL
+            FPT POLYTECHNIC
           </span>
           {subText && (
-            <span className="font-extrabold text-slate-500 text-xs tracking-widest uppercase mt-1">
+            <span className="font-extrabold text-slate-500 text-xs tracking-[0.25em] uppercase mt-1 text-center w-full">
               {subText}
             </span>
           )}
@@ -112,21 +112,21 @@ export const FptPolySchoolLogo: React.FC<FptPolySchoolLogoProps> = ({
     );
   }
 
-  // Horizontal navbar variant: 3 letters FPT emblem + "FPT POLYSCHOOL" brand text
+  // Horizontal navbar variant: 3 letters FPT emblem + "FPT POLYTECHNIC" brand text
   return (
     <div className={`flex items-center gap-3 select-none ${className}`}>
       {/* 3 Letters FPT SVG Emblem */}
       <FptEmblem className="h-8 sm:h-9 w-auto drop-shadow-2xs" />
 
       {/* Brand Text */}
-      <div className="flex flex-col justify-center">
+      <div className="flex flex-col justify-center items-center text-center">
         <span
-          className="font-black text-[#F27123] text-base sm:text-[17px] tracking-wider leading-tight"
+          className="font-black text-[#F27123] text-base sm:text-[17px] tracking-wider leading-tight text-center"
           style={{ fontFamily: "'Rockwell', 'Roboto Slab', 'Georgia', serif" }}
         >
-          FPT POLYSCHOOL
+          FPT POLYTECHNIC
         </span>
-        <span className="font-extrabold text-slate-500 text-[10.5px] tracking-widest uppercase leading-none mt-0.5">
+        <span className="font-extrabold text-slate-500 text-[10px] sm:text-[10.5px] tracking-[0.25em] uppercase leading-none mt-1 text-center w-full">
           {subText}
         </span>
       </div>

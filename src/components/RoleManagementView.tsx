@@ -1052,7 +1052,7 @@ export const RoleManagementView: React.FC<RoleManagementViewProps> = ({
                   <p className="text-[11px] text-slate-500 text-center">
                     {logoInput
                       ? 'Đang xem trước ảnh tùy chỉnh từ link bạn vừa nhập'
-                      : 'Đang xem trước Logo Vector chuẩn FPT PolySchool'}
+                      : 'Đang xem trước Logo Vector chuẩn FPT Polytechnic'}
                   </p>
                 </div>
               </div>
