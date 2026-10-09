@@ -97,8 +97,9 @@ export default function App() {
     return DEFAULT_ADMIN_USERS;
   });
 
-  // Current Role
-  const currentRole: 'user' | 'admin' = currentAdminUser ? 'admin' : 'user';
+  // Current Role - Chỉ khi có phiên đăng nhập VÀ role === 'admin' mới là admin
+  const currentRole: 'user' | 'admin' =
+    currentAdminUser && currentAdminUser.role === 'admin' ? 'admin' : 'user';
 
   // Data state
   const [apps, setApps] = useState<WebAppItem[]>(() => {
@@ -293,24 +294,10 @@ export default function App() {
     }
   };
 
-  // Cập nhật tiêu đề trình duyệt tự động theo phân hiệu / cơ sở đào tạo và ép favicon
+  // Yêu cầu 2: Tiêu đề trang thống nhất "Trang chủ - FPL & FPS DNA"
   useEffect(() => {
-    const campus = sheetConfig.campusName || 'ĐỒNG NAI';
-    const shortCampus = campus.trim().toUpperCase() === 'ĐỒNG NAI' ? 'ĐN' : campus.trim();
-    document.title = `FPT PolySchool ${shortCampus} | Quản Lý Đào Tạo`;
-
-    // Dynamic favicon booster để ép trình duyệt cập nhật ngay lập tức không bị cache
-    try {
-      let link: HTMLLinkElement | null = document.querySelector("link[rel*='icon']");
-      if (!link) {
-        link = document.createElement('link');
-        link.rel = 'icon';
-        document.head.appendChild(link);
-      }
-      link.type = 'image/png';
-      link.href = `/favicon.png?v=${Date.now()}`;
-    } catch {}
-  }, [sheetConfig.campusName]);
+    document.title = 'Trang chủ - FPL & FPS DNA';
+  }, []);
 
   // Tự động nạp dữ liệu từ Firestore và lắng nghe thời gian thực khi load trang
   useEffect(() => {
@@ -370,11 +357,10 @@ export default function App() {
         if (activeUser && activeUser.email) {
           const userEmail = activeUser.email.toLowerCase().trim();
           const isSuper = SYSTEM_SUPER_ADMINS.includes(userEmail);
-          const isAuthorized =
-            isSuper ||
-            latestAdmins.some(
-              (a) => a.email.toLowerCase().trim() === userEmail && a.role === 'admin'
-            );
+          const foundAcc = latestAdmins.find(
+            (a) => a.email.toLowerCase().trim() === userEmail
+          );
+          const isAuthorized = isSuper || (foundAcc != null && foundAcc.role === 'admin');
 
           if (!isAuthorized) {
             console.warn(`[SECURITY] Tài khoản ${userEmail} vừa bị Super Admin thu hồi quyền!`);
@@ -408,9 +394,10 @@ export default function App() {
             // Super Admin luôn hợp lệ
           } else {
             getAdminUsersFromFirestore().then((serverAdmins) => {
-              const isAuthorized = serverAdmins.some(
-                (a) => a.email.toLowerCase().trim() === userEmail && a.role === 'admin'
+              const foundAcc = serverAdmins.find(
+                (a) => a.email.toLowerCase().trim() === userEmail
               );
+              const isAuthorized = foundAcc != null && foundAcc.role === 'admin';
               if (!isAuthorized) {
                 revokeAdminSession(
                   `Tài khoản "${savedUser.email}" đã bị thu hồi quyền Admin bởi Super Admin.`,
@@ -425,8 +412,8 @@ export default function App() {
       }
     }
 
-    // 6. KIỂM TRA ĐỊNH KỲ CỨ SAU MỖI 10 GIÂY
-    // Tự động kiểm tra quyền Admin ngầm mỗi 10 giây để thu hồi ngay lập tức nếu bị xóa
+    // 6. KIỂM TRA ĐỊNH KỲ CỨ SAU MỖI 5 GIÂY
+    // Tự động kiểm tra quyền Admin ngầm mỗi 5 giây để thu hồi ngay lập tức nếu bị xóa
     const adminCheckInterval = setInterval(async () => {
       const activeUser = currentAdminUserRef.current;
       if (activeUser && activeUser.email) {
@@ -434,9 +421,10 @@ export default function App() {
         if (!SYSTEM_SUPER_ADMINS.includes(userEmail)) {
           try {
             const serverAdmins = await getAdminUsersFromFirestore();
-            const isAuthorized = serverAdmins.some(
-              (a) => a.email.toLowerCase().trim() === userEmail && a.role === 'admin'
+            const foundAcc = serverAdmins.find(
+              (a) => a.email.toLowerCase().trim() === userEmail
             );
+            const isAuthorized = foundAcc != null && foundAcc.role === 'admin';
             if (!isAuthorized) {
               revokeAdminSession(
                 `Tài khoản "${userEmail}" đã bị thu hồi quyền Admin bởi Super Admin.`,
@@ -446,7 +434,7 @@ export default function App() {
           } catch {}
         }
       }
-    }, 10000);
+    }, 5000);
 
     return () => {
       unsubscribeApps();
@@ -490,6 +478,21 @@ export default function App() {
 
   // CHỨC NĂNG: ĐĂNG NHẬP ADMIN BẰNG EMAIL & MẬT KHẨU TỪ GOOGLE SHEETS
   const handleLoginAdmin = async (email: string, pin: string): Promise<boolean> => {
+    const cleanEmail = email.toLowerCase().trim();
+    const cleanPin = pin.trim();
+
+    // 1. Kiểm tra xác thực quyền từ Firestore trước tiên!
+    // TUYỆT ĐỐI KHÔNG CHO PHÉP ĐĂNG NHẬP nếu tài khoản đã bị thu hồi quyền (role: 'user')
+    const authCheck = await handleUserLoginAuthCheck(cleanEmail);
+    if (!authCheck.isAuthorizedAdmin) {
+      clearPermissionsCache();
+      setCurrentAdminUser(null);
+      throw new Error(
+        `Tài khoản "${cleanEmail}" không có quyền Quản trị viên hoặc quyền đã bị thu hồi bởi Super Admin (vai trò hiện tại: Người dùng)!`
+      );
+    }
+
+    // 2. Kiểm tra mật khẩu / PIN từ Google Sheets permissionsCsvUrl hoặc Firestore
     const permissionsUrl = sheetConfig.permissionsCsvUrl || DEFAULT_SHEET_CONFIG.permissionsCsvUrl;
     let accounts: AdminAccount[] = [];
 
@@ -501,24 +504,34 @@ export default function App() {
       }
     }
 
-    const cleanEmail = email.toLowerCase().trim();
-    const cleanPin = pin.trim();
+    let matchedPin = false;
+    let matchedName = authCheck.account.name;
 
     if (accounts.length > 0) {
       const matched = accounts.find(
         (acc) =>
           acc.email.toLowerCase().trim() === cleanEmail &&
-          acc.passwordOrPin?.trim() === cleanPin &&
-          acc.role === 'admin'
+          acc.passwordOrPin?.trim() === cleanPin
       );
-
       if (matched) {
-        setCurrentAdminUser(matched);
-        sessionStorage.setItem('fpt_portal_admin_user', JSON.stringify(matched));
-        showToast(`Xin chào ${matched.name}! Đã đăng nhập quyền Quản trị viên.`);
-        return true;
+        matchedPin = true;
+        if (matched.name) matchedName = matched.name;
       }
-      return false;
+    }
+
+    if (!matchedPin && authCheck.account.passwordOrPin && authCheck.account.passwordOrPin.trim() === cleanPin) {
+      matchedPin = true;
+    }
+
+    if (matchedPin) {
+      const loggedAccount: AdminAccount = {
+        ...authCheck.account,
+        name: matchedName || authCheck.account.name
+      };
+      setCurrentAdminUser(loggedAccount);
+      sessionStorage.setItem('fpt_portal_admin_user', JSON.stringify(loggedAccount));
+      showToast(`Xin chào ${loggedAccount.name}! Đã đăng nhập quyền Quản trị viên.`);
+      return true;
     }
 
     return false;
@@ -542,6 +555,17 @@ export default function App() {
       try {
         sessionStorage.setItem('fpt_portal_admin_user', JSON.stringify(adminAcc));
       } catch {}
+
+      // Đồng bộ nạp danh sách admin mới nhất từ Firestore để UI hiển thị chuẩn xác
+      getAdminUsersFromFirestore().then((cloudAdmins) => {
+        if (cloudAdmins && cloudAdmins.length > 0) {
+          setAdminUsers(cloudAdmins);
+          try {
+            localStorage.setItem('fpt_portal_admin_users', JSON.stringify(cloudAdmins));
+          } catch {}
+        }
+      }).catch(() => null);
+
       showToast(`Đăng nhập Google OAuth thành công! Xin chào ${adminAcc.name}.`);
       return true;
     } else {
@@ -575,6 +599,9 @@ export default function App() {
         currentAdminUser?.name || 'Super Admin'
       );
       setAdminUsers(nextList);
+      try {
+        localStorage.setItem('fpt_portal_admin_users', JSON.stringify(nextList));
+      } catch {}
 
       if (newRole === 'user') {
         if (currentAdminUser?.email?.toLowerCase().trim() === cleanEmail) {
