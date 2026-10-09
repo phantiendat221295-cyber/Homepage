@@ -269,7 +269,7 @@ export const RoleManagementView: React.FC<RoleManagementViewProps> = ({
     if (!onRemoveAdminUser) return;
     if (
       window.confirm(
-        `Bạn có chắc chắn muốn thu hồi quyền Admin của "${email}"? Tài khoản này sẽ bị hủy quyền ngay sau 30 giây hoặc khi họ tải lại trang.`
+        `Bạn có chắc chắn muốn thu hồi quyền Admin của "${email}"? Tài khoản này sẽ bị hủy quyền ngay lập tức theo thời gian thực và không thể đăng nhập lại.`
       )
     ) {
       setAdminActionError(null);
