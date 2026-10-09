@@ -23,9 +23,22 @@ service cloud.firestore {
       allow read, write: if true;
     }
 
+    // Kiểm tra quyền Super Admin
+    function isSuperAdmin() {
+      return request.auth != null && (
+        request.auth.token.email in ['datpt60@fpt.edu.vn', 'phantiendat221295@gmail.com'] ||
+        (exists(/databases/$(database)/documents/admin_users/$(request.auth.uid)) &&
+         get(/databases/$(database)/documents/admin_users/$(request.auth.uid)).data.role == 'superAdmin')
+      );
+    }
+
     // Danh sách phân quyền Quản trị viên (Admin)
     match /admin_users/{adminId} {
-      allow read, write: if true;
+      allow read: if true;
+      allow create: if request.auth != null;
+      // Chỉ cho phép update khi request.auth hợp lệ và người thực hiện update phải có role là superAdmin
+      allow update: if request.auth != null && isSuperAdmin();
+      allow delete: if request.auth != null && isSuperAdmin();
     }
   }
 }

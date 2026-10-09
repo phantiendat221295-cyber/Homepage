@@ -58,6 +58,7 @@ interface RoleManagementViewProps {
   adminUsers?: AdminAccount[];
   onAddAdminUser?: (email: string, name?: string) => Promise<void>;
   onRemoveAdminUser?: (email: string) => Promise<void>;
+  onUpdateAdminRole?: (email: string, newRole: 'admin' | 'user') => Promise<void>;
   onResetDefaultAdmins?: () => Promise<void>;
   onSyncNow?: () => Promise<void> | void;
   isSyncing?: boolean;
@@ -88,6 +89,7 @@ export const RoleManagementView: React.FC<RoleManagementViewProps> = ({
   adminUsers = [],
   onAddAdminUser,
   onRemoveAdminUser,
+  onUpdateAdminRole,
   onResetDefaultAdmins,
   onSyncNow,
   isSyncing = false,
@@ -266,12 +268,16 @@ export const RoleManagementView: React.FC<RoleManagementViewProps> = ({
   };
 
   const handleRemoveAdminClick = async (email: string) => {
-    if (!onRemoveAdminUser) return;
     if (
       window.confirm(
-        `Bạn có chắc chắn muốn thu hồi quyền Admin của "${email}"? Tài khoản này sẽ bị hủy quyền ngay lập tức theo thời gian thực và không thể đăng nhập lại.`
+        `Bạn có chắc chắn muốn thu hồi quyền Admin của "${email}"? Tài khoản này sẽ chuyển sang vai trò Người dùng (User) và không thể truy cập quyền Quản trị.`
       )
     ) {
+      if (onUpdateAdminRole) {
+        await handleRoleChange(email, 'user');
+        return;
+      }
+      if (!onRemoveAdminUser) return;
       setAdminActionError(null);
       setAdminActionSuccess(null);
       try {
@@ -280,6 +286,23 @@ export const RoleManagementView: React.FC<RoleManagementViewProps> = ({
       } catch (err: any) {
         setAdminActionError(err.message || 'Lỗi khi thu hồi quyền Admin');
       }
+    }
+  };
+
+  const handleRoleChange = async (email: string, newRole: 'admin' | 'user') => {
+    setAdminActionError(null);
+    setAdminActionSuccess(null);
+    try {
+      if (onUpdateAdminRole) {
+        await onUpdateAdminRole(email, newRole);
+      } else if (newRole === 'user' && onRemoveAdminUser) {
+        await onRemoveAdminUser(email);
+      }
+      setAdminActionSuccess(
+        `Đã đổi quyền của "${email}" thành "${newRole === 'admin' ? 'Quản trị viên (Admin)' : 'Người dùng (User)'}"!`
+      );
+    } catch (err: any) {
+      setAdminActionError(err.message || 'Lỗi khi cập nhật vai trò');
     }
   };
 
@@ -642,10 +665,27 @@ export const RoleManagementView: React.FC<RoleManagementViewProps> = ({
                             </td>
 
                             <td className="py-3 px-4">
-                              <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-semibold bg-emerald-100 text-emerald-800 border border-emerald-200">
-                                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
-                                Quản trị viên (Admin)
-                              </span>
+                              {isSuper ? (
+                                <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-semibold bg-amber-100 text-amber-800 border border-amber-300">
+                                  <span className="w-1.5 h-1.5 rounded-full bg-amber-500" />
+                                  Super Admin (Toàn quyền)
+                                </span>
+                              ) : (
+                                <div className="flex items-center gap-1.5">
+                                  <select
+                                    value={admin.role || 'admin'}
+                                    onChange={(e) => handleRoleChange(admin.email, e.target.value as 'admin' | 'user')}
+                                    className={`text-xs font-bold px-2.5 py-1 rounded-xl border focus:outline-none cursor-pointer transition-colors ${
+                                      admin.role === 'admin'
+                                        ? 'bg-emerald-50 text-emerald-800 border-emerald-300'
+                                        : 'bg-rose-50 text-rose-700 border-rose-200'
+                                    }`}
+                                  >
+                                    <option value="admin">Quản trị viên (Admin)</option>
+                                    <option value="user">Người dùng (User - Đã thu hồi)</option>
+                                  </select>
+                                </div>
+                              )}
                             </td>
 
                             <td className="py-3 px-4 text-xs text-slate-500">
@@ -665,12 +705,22 @@ export const RoleManagementView: React.FC<RoleManagementViewProps> = ({
                                 <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-xl bg-amber-50 text-amber-800 font-bold text-xs border border-amber-200">
                                   Super Admin (Bảo vệ)
                                 </span>
+                              ) : admin.role === 'user' ? (
+                                <button
+                                  type="button"
+                                  onClick={() => handleRoleChange(admin.email, 'admin')}
+                                  className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-xl bg-emerald-50 hover:bg-emerald-100 text-emerald-700 font-semibold text-xs border border-emerald-200 transition-colors cursor-pointer"
+                                  title="Cấp lại quyền quản trị cho tài khoản này"
+                                >
+                                  <Check size={13} />
+                                  <span>Cấp lại quyền Admin</span>
+                                </button>
                               ) : (
                                 <button
                                   type="button"
                                   onClick={() => handleRemoveAdminClick(admin.email)}
                                   className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-xl bg-rose-50 hover:bg-rose-100 text-rose-700 font-semibold text-xs border border-rose-200 transition-colors cursor-pointer"
-                                  title="Thu hồi quyền quản trị của tài khoản này"
+                                  title="Thu hồi quyền quản trị của tài khoản này (chuyển sang role: user)"
                                 >
                                   <UserX size={13} />
                                   <span>Thu hồi quyền</span>

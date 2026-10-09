@@ -40,6 +40,7 @@ export interface AdminAccount {
   isSuperAdmin?: boolean;
   addedAt?: string;
   addedBy?: string;
+  lastLogin?: string;
 }
 
 export interface SupportTicket {
