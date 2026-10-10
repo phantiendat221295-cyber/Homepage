@@ -31,10 +31,13 @@ import {
   Users,
   UserCheck,
   Calendar,
-  Download
+  Download,
+  ClipboardList
 } from 'lucide-react';
 import { DynamicIcon } from './DynamicIcon';
 import { FptPolySchoolLogo } from './FptPolySchoolLogo';
+import { DatePickerInput } from './DatePickerInput';
+import { SystemAuditLogView } from './SystemAuditLogView';
 import {
   DEFAULT_GOOGLE_CLIENT_ID,
   renderGoogleSignInButton,
@@ -140,12 +143,12 @@ export const RoleManagementView: React.FC<RoleManagementViewProps> = ({
     SYSTEM_SUPER_ADMINS.includes((currentAdminUser?.email || '').toLowerCase().trim());
 
   // Admin view tab: Super Admin mặc định mở 'admins', Admin thường mở 'apps'
-  const [adminTab, setAdminTab] = useState<'admins' | 'apps' | 'notifications' | 'tickets' | 'logo'>(() => {
+  const [adminTab, setAdminTab] = useState<'admins' | 'apps' | 'notifications' | 'tickets' | 'audit_logs' | 'logo'>(() => {
     return isSuperAdmin ? 'admins' : 'apps';
   });
 
   useEffect(() => {
-    if (!isSuperAdmin && adminTab === 'admins') {
+    if (!isSuperAdmin && (adminTab === 'admins' || adminTab === 'audit_logs')) {
       setAdminTab('apps');
     }
   }, [isSuperAdmin, adminTab]);
@@ -655,7 +658,25 @@ export const RoleManagementView: React.FC<RoleManagementViewProps> = ({
               )}
             </button>
 
-            {/* TAB 4: TÙY CHỈNH LOGO & PHÂN HIỆU */}
+            {/* TAB 5: NHẬT KÝ KIỂM TOÁN HỆ THỐNG - CHỈ HIỂN THỊ DUY NHẤT CHO SUPER ADMIN */}
+            {isSuperAdmin && (
+              <button
+                onClick={() => setAdminTab('audit_logs')}
+                className={`px-4 py-2.5 rounded-xl font-bold text-xs sm:text-sm transition-all cursor-pointer flex items-center gap-2 shrink-0 ${
+                  adminTab === 'audit_logs'
+                    ? 'bg-blue-600 text-white shadow-xs'
+                    : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                }`}
+              >
+                <ClipboardList size={16} />
+                <span>Nhật Ký Hệ Thống</span>
+                <span className="px-1.5 py-0.2 bg-amber-400 text-amber-950 text-[10px] font-black rounded-md">
+                  SUPER
+                </span>
+              </button>
+            )}
+
+            {/* TAB 6: TÙY CHỈNH LOGO & PHÂN HIỆU */}
             <button
               onClick={() => setAdminTab('logo')}
               className={`px-4 py-2.5 rounded-xl font-bold text-xs sm:text-sm transition-all cursor-pointer flex items-center gap-2 shrink-0 ${
@@ -1491,32 +1512,25 @@ export const RoleManagementView: React.FC<RoleManagementViewProps> = ({
                     />
                   </div>
 
-                  {/* Ngày & Màu sắc */}
+                  {/* Ngày & Hạn hoàn thành - Trình chọn ngày bằng lịch tương tác */}
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                    <div>
-                      <label className="block text-xs font-bold text-slate-700 mb-1">
-                        Ngày hiển thị
-                      </label>
-                      <input
-                        type="text"
-                        value={notiFormDate}
-                        onChange={(e) => setNotiFormDate(e.target.value)}
-                        placeholder="Ví dụ: 15/10/2026"
-                        className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2 text-xs sm:text-sm text-slate-800 focus:bg-white focus:border-blue-500 focus:outline-none"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-xs font-bold text-slate-700 mb-1">
-                        Hạn hoàn thành (Due Date)
-                      </label>
-                      <input
-                        type="text"
-                        value={notiFormDueDate}
-                        onChange={(e) => setNotiFormDueDate(e.target.value)}
-                        placeholder="Ví dụ: 25/10/2026 (tùy chọn)"
-                        className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2 text-xs sm:text-sm text-slate-800 focus:bg-white focus:border-blue-500 focus:outline-none"
-                      />
-                    </div>
+                    <DatePickerInput
+                      id="notiFormDate"
+                      label="Ngày hiển thị"
+                      value={notiFormDate}
+                      onChange={setNotiFormDate}
+                      placeholder="Chọn ngày hiển thị..."
+                      required
+                    />
+                    <DatePickerInput
+                      id="notiFormDueDate"
+                      label="Hạn hoàn thành (Due Date)"
+                      value={notiFormDueDate}
+                      onChange={setNotiFormDueDate}
+                      placeholder="Chọn hạn hoàn thành (tùy chọn)..."
+                      allowClear
+                      helperText="Hạn hoàn thành có thể để trống nếu không bắt buộc."
+                    />
                   </div>
 
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -1845,6 +1859,11 @@ export const RoleManagementView: React.FC<RoleManagementViewProps> = ({
                 </div>
               )}
             </div>
+          )}
+
+          {/* NỘI DUNG TAB 5: NHẬT KÝ KIỂM TOÁN HỆ THỐNG - CHỈ DUY NHẤT CHO SUPER ADMIN */}
+          {adminTab === 'audit_logs' && isSuperAdmin && (
+            <SystemAuditLogView currentAdminEmail={currentAdminUser?.email} />
           )}
 
           {/* NỘI DUNG TAB 4: TÙY CHỈNH LOGO & PHÂN HIỆU */}

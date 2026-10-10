@@ -151,6 +151,18 @@ service cloud.firestore {
                        !(adminId in ['datpt60@fpt.edu.vn', 'phantiendat221295@gmail.com']);
     }
 
+    // ==========================================
+    // 6. SYSTEM AUDIT LOGS (system_audit_logs)
+    // ==========================================
+    // Chỉ Super Admin mới có quyền xem toàn bộ nhật ký hệ thống;
+    // Người dùng đã xác thực (Admin/Super Admin) được phép ghi nhật ký;
+    // Tuyệt đối không ai được sửa hoặc xóa nhật ký kiểm toán (Bất biến).
+    match /system_audit_logs/{logId} {
+      allow read: if isSuperAdmin();
+      allow create: if isSignedIn();
+      allow update, delete: if false;
+    }
+
     // Mặc định từ chối tất cả collection khác
     match /{document=**} {
       allow read, write: if false;

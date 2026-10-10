@@ -8,10 +8,22 @@ import {
   deleteDoc,
   writeBatch,
   onSnapshot,
-  getDocFromServer
+  getDocFromServer,
+  query,
+  orderBy,
+  limit
 } from 'firebase/firestore';
 import { db, auth } from './firebase';
-import { WebAppItem, NotificationItem, SupportTicket, GoogleSheetsConfig, AdminAccount } from '../types';
+import {
+  WebAppItem,
+  NotificationItem,
+  SupportTicket,
+  GoogleSheetsConfig,
+  AdminAccount,
+  SystemAuditLog,
+  AuditActionType,
+  AuditTargetType
+} from '../types';
 
 export enum OperationType {
   CREATE = 'create',
@@ -95,6 +107,148 @@ export async function testFirestoreConnection(): Promise<boolean> {
 }
 
 // ==========================================
+// NHẬT KÝ KIỂM TOÁN HỆ THỐNG (COLLECTION: system_audit_logs)
+// ==========================================
+export const SYSTEM_AUDIT_LOGS_COLLECTION = 'system_audit_logs';
+
+const SENSITIVE_KEYS = new Set([
+  'password',
+  'pin',
+  'token',
+  'secret',
+  'passwordOrPin',
+  'credential',
+  'apiKey',
+  'clientSecret'
+]);
+
+/**
+ * Loại bỏ toàn bộ trường nhạy cảm trước khi lưu vào audit logs
+ */
+function stripSensitiveAuditData(obj: any): any {
+  if (!obj || typeof obj !== 'object') return obj;
+  if (Array.isArray(obj)) return obj.map(stripSensitiveAuditData);
+  const cleaned: Record<string, any> = {};
+  for (const [k, v] of Object.entries(obj)) {
+    if (!SENSITIVE_KEYS.has(k)) {
+      cleaned[k] = typeof v === 'object' ? stripSensitiveAuditData(v) : v;
+    }
+  }
+  return cleaned;
+}
+
+/**
+ * Ghi nhận một thao tác quản trị vào Nhật ký kiểm toán toàn hệ thống
+ * Danh tính người thực hiện lấy trực tiếp từ Firebase Auth currentUser
+ */
+export async function recordSystemAuditLog(entry: {
+  action: AuditActionType;
+  targetType: AuditTargetType;
+  targetId: string;
+  targetTitle?: string;
+  description: string;
+  changes?: {
+    before?: Record<string, any>;
+    after?: Record<string, any>;
+    diffFields?: string[];
+  };
+  metadata?: Record<string, any>;
+  performedBy?: string;
+  performedByName?: string;
+}): Promise<void> {
+  try {
+    const user = auth.currentUser;
+    const performedBy = user?.email || entry.performedBy || 'Unknown';
+    const performedByName =
+      user?.displayName ||
+      entry.performedByName ||
+      (performedBy.includes('@') ? performedBy.split('@')[0] : performedBy);
+    const performedByUid = user?.uid || '';
+
+    const logId = `audit_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
+    const logRef = doc(db, SYSTEM_AUDIT_LOGS_COLLECTION, logId);
+
+    const payload: SystemAuditLog = {
+      id: logId,
+      timestamp: new Date().toISOString(),
+      performedBy: performedBy.toLowerCase().trim(),
+      performedByName,
+      performedByUid,
+      action: entry.action,
+      targetType: entry.targetType,
+      targetId: entry.targetId,
+      targetTitle: entry.targetTitle || '',
+      description: entry.description,
+      changes: entry.changes ? stripSensitiveAuditData(entry.changes) : undefined,
+      metadata: entry.metadata ? stripSensitiveAuditData(entry.metadata) : undefined
+    };
+
+    await setDoc(logRef, sanitizeData(payload));
+  } catch (err) {
+    console.warn('[Audit Log]: Lỗi ghi nhận nhật ký hệ thống:', err);
+  }
+}
+
+/**
+ * Lấy danh sách nhật ký kiểm toán hệ thống từ Firestore (Super Admin)
+ */
+export async function getSystemAuditLogsFromFirestore(
+  maxLimit = 150
+): Promise<SystemAuditLog[]> {
+  try {
+    const colRef = collection(db, SYSTEM_AUDIT_LOGS_COLLECTION);
+    const q = query(colRef, orderBy('timestamp', 'desc'), limit(maxLimit));
+    const snapshot = await getDocs(q);
+    const items: SystemAuditLog[] = [];
+    snapshot.forEach((snap) => {
+      items.push({ id: snap.id, ...(snap.data() as Omit<SystemAuditLog, 'id'>) });
+    });
+    return items;
+  } catch {
+    // Fallback nếu index Firestore đang trong quá trình khởi tạo
+    try {
+      const colRef = collection(db, SYSTEM_AUDIT_LOGS_COLLECTION);
+      const snapshot = await getDocs(colRef);
+      const items: SystemAuditLog[] = [];
+      snapshot.forEach((snap) => {
+        items.push({ id: snap.id, ...(snap.data() as Omit<SystemAuditLog, 'id'>) });
+      });
+      return items
+        .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
+        .slice(0, maxLimit);
+    } catch (err2) {
+      handleFirestoreError(err2, OperationType.LIST, SYSTEM_AUDIT_LOGS_COLLECTION);
+      return [];
+    }
+  }
+}
+
+/**
+ * Đăng ký lắng nghe realtime nhật ký kiểm toán hệ thống (Super Admin)
+ */
+export function subscribeSystemAuditLogs(
+  onUpdate: (logs: SystemAuditLog[]) => void,
+  onError?: (err: any) => void
+): () => void {
+  const colRef = collection(db, SYSTEM_AUDIT_LOGS_COLLECTION);
+  return onSnapshot(
+    colRef,
+    (snapshot) => {
+      const items: SystemAuditLog[] = [];
+      snapshot.forEach((snap) => {
+        items.push({ id: snap.id, ...(snap.data() as Omit<SystemAuditLog, 'id'>) });
+      });
+      items.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+      onUpdate(items);
+    },
+    (error) => {
+      handleFirestoreError(error, OperationType.GET, SYSTEM_AUDIT_LOGS_COLLECTION);
+      if (onError) onError(error);
+    }
+  );
+}
+
+// ==========================================
 // 1. QUẢN LÝ TIỆN ÍCH WEBAPPS (COLLECTION: apps)
 // ==========================================
 
@@ -143,11 +297,23 @@ export function subscribeApps(
 }
 
 /**
- * Thêm hoặc Cập nhật Tiện ích lên Firestore
+ * Thêm hoặc Cập nhật Tiện ích lên Firestore (kèm ghi nhận Audit Log)
  */
 export async function saveAppToFirestore(app: WebAppItem): Promise<void> {
   const docId = app.id || `app-${Date.now()}`;
   const docRef = doc(db, APPS_COLLECTION, docId);
+
+  // Đọc dữ liệu cũ để so sánh diff ghi vào Audit Log
+  let prevApp: WebAppItem | null = null;
+  try {
+    const snap = await getDoc(docRef);
+    if (snap.exists()) {
+      prevApp = snap.data() as WebAppItem;
+    }
+  } catch {
+    // ignore
+  }
+
   const payload = sanitizeData({
     ...app,
     id: docId,
@@ -156,6 +322,61 @@ export async function saveAppToFirestore(app: WebAppItem): Promise<void> {
 
   try {
     await setDoc(docRef, payload, { merge: true });
+
+    // Ghi nhật ký kiểm toán hệ thống
+    if (!prevApp) {
+      await recordSystemAuditLog({
+        action: 'CREATE',
+        targetType: 'app',
+        targetId: docId,
+        targetTitle: app.title,
+        description: `Tạo mới tiện ích webapp: "${app.title}" (Đường dẫn: ${app.url})`,
+        changes: {
+          after: {
+            title: app.title,
+            url: app.url,
+            category: app.category,
+            icon: app.icon,
+            colorTheme: app.colorTheme,
+            badge: app.badge
+          }
+        }
+      });
+    } else {
+      const diffFields: string[] = [];
+      const beforeDiff: Record<string, any> = {};
+      const afterDiff: Record<string, any> = {};
+
+      const checkFields: (keyof WebAppItem)[] = [
+        'title',
+        'url',
+        'category',
+        'icon',
+        'colorTheme',
+        'badge',
+        'description'
+      ];
+      for (const f of checkFields) {
+        if (prevApp[f] !== app[f]) {
+          diffFields.push(f);
+          beforeDiff[f] = prevApp[f] ?? null;
+          afterDiff[f] = app[f] ?? null;
+        }
+      }
+
+      await recordSystemAuditLog({
+        action: 'UPDATE',
+        targetType: 'app',
+        targetId: docId,
+        targetTitle: app.title,
+        description: `Cập nhật thông tin tiện ích "${app.title}"${diffFields.length > 0 ? ` (Thay đổi: ${diffFields.join(', ')})` : ''}`,
+        changes: {
+          before: beforeDiff,
+          after: afterDiff,
+          diffFields
+        }
+      });
+    }
   } catch (error) {
     handleFirestoreError(error, OperationType.WRITE, `${APPS_COLLECTION}/${docId}`);
     throw error;
@@ -163,12 +384,42 @@ export async function saveAppToFirestore(app: WebAppItem): Promise<void> {
 }
 
 /**
- * Xóa Tiện ích khỏi Firestore
+ * Xóa Tiện ích khỏi Firestore (kèm ghi nhận Audit Log)
  */
 export async function deleteAppFromFirestore(appId: string): Promise<void> {
   const docRef = doc(db, APPS_COLLECTION, appId);
+  let appTitle = appId;
+  let deletedAppData: any = null;
+  try {
+    const snap = await getDoc(docRef);
+    if (snap.exists()) {
+      deletedAppData = snap.data();
+      appTitle = deletedAppData.title || appId;
+    }
+  } catch {
+    // ignore
+  }
+
   try {
     await deleteDoc(docRef);
+
+    // Ghi nhật ký kiểm toán hệ thống
+    await recordSystemAuditLog({
+      action: 'DELETE',
+      targetType: 'app',
+      targetId: appId,
+      targetTitle: appTitle,
+      description: `Xóa tiện ích webapp: "${appTitle}" (ID: ${appId})`,
+      changes: {
+        before: deletedAppData
+          ? {
+              title: deletedAppData.title,
+              url: deletedAppData.url,
+              category: deletedAppData.category
+            }
+          : undefined
+      }
+    });
   } catch (error) {
     handleFirestoreError(error, OperationType.DELETE, `${APPS_COLLECTION}/${appId}`);
     throw error;
@@ -343,6 +594,15 @@ export async function savePortalConfigToFirestore(config: GoogleSheetsConfig): P
       }),
       { merge: true }
     );
+
+    // Ghi nhật ký kiểm toán hệ thống
+    await recordSystemAuditLog({
+      action: 'CONFIG_CHANGE',
+      targetType: 'portal_config',
+      targetId: PORTAL_CONFIG_DOC,
+      targetTitle: 'Cấu hình hệ thống & Google Sheets',
+      description: `Cập nhật cấu hình hệ thống: Cơ sở "${config.campusName || 'Mặc định'}", Đồng bộ Google Sheets: ${config.enableGoogleSheetsSync ? 'Bật' : 'Tắt'}`
+    });
   } catch (error) {
     handleFirestoreError(error, OperationType.WRITE, `${SETTINGS_COLLECTION}/${PORTAL_CONFIG_DOC}`);
     throw error;
@@ -395,16 +655,86 @@ export async function getNotificationsFromFirestore(): Promise<NotificationItem[
 }
 
 /**
- * Lưu 1 thông báo lên Firestore (Thêm mới hoặc Cập nhật)
+ * Lưu 1 thông báo lên Firestore (Thêm mới hoặc Cập nhật kèm ghi nhận Audit Log)
  */
 export async function saveNotificationToFirestore(item: NotificationItem): Promise<void> {
   const docRef = doc(db, NOTIFICATIONS_COLLECTION, item.id);
+
+  let prevNoti: NotificationItem | null = null;
+  try {
+    const snap = await getDoc(docRef);
+    if (snap.exists()) {
+      prevNoti = snap.data() as NotificationItem;
+    }
+  } catch {
+    // ignore
+  }
+
   const dataToSave = sanitizeData({
     ...item,
     updatedAt: new Date().toISOString()
   });
+
   try {
     await setDoc(docRef, dataToSave, { merge: true });
+
+    // Ghi nhật ký kiểm toán hệ thống
+    if (!prevNoti) {
+      await recordSystemAuditLog({
+        action: 'CREATE',
+        targetType: 'notification',
+        targetId: item.id,
+        targetTitle: item.title,
+        description: `Tạo thông báo mới: "${item.title}" (Ngày: ${item.date}, Hạn: ${item.dueDate || 'Không có'})`,
+        changes: {
+          after: {
+            title: item.title,
+            date: item.date,
+            dueDate: item.dueDate,
+            priority: item.priority,
+            assignedTo: item.assignedTo
+          }
+        }
+      });
+    } else {
+      const diffFields: string[] = [];
+      const beforeDiff: Record<string, any> = {};
+      const afterDiff: Record<string, any> = {};
+
+      const checkFields: (keyof NotificationItem)[] = [
+        'title',
+        'date',
+        'dueDate',
+        'priority',
+        'url',
+        'color',
+        'content',
+        'isImportant',
+        'assignedTo'
+      ];
+      for (const f of checkFields) {
+        const valA = JSON.stringify(prevNoti[f] ?? null);
+        const valB = JSON.stringify(item[f] ?? null);
+        if (valA !== valB) {
+          diffFields.push(f);
+          beforeDiff[f] = prevNoti[f] ?? null;
+          afterDiff[f] = item[f] ?? null;
+        }
+      }
+
+      await recordSystemAuditLog({
+        action: 'UPDATE',
+        targetType: 'notification',
+        targetId: item.id,
+        targetTitle: item.title,
+        description: `Cập nhật thông báo: "${item.title}"${diffFields.length > 0 ? ` (Thay đổi: ${diffFields.join(', ')})` : ''}`,
+        changes: {
+          before: beforeDiff,
+          after: afterDiff,
+          diffFields
+        }
+      });
+    }
   } catch (error) {
     handleFirestoreError(error, OperationType.WRITE, `${NOTIFICATIONS_COLLECTION}/${item.id}`);
     throw error;
@@ -508,6 +838,21 @@ export async function updateUserChecklistStatusInFirestore(
     } catch {
       // ignore
     }
+
+    // 4. Ghi nhận vào Nhật ký kiểm toán toàn hệ thống (System Audit Log)
+    await recordSystemAuditLog({
+      action: 'TOGGLE_CHECKLIST',
+      targetType: 'notification',
+      targetId: notificationId,
+      targetTitle: notiData.title,
+      description: `${completed ? 'Đánh dấu hoàn thành' : 'Mở lại'} checklist cho "${cleanTargetEmail}" trong "${notiData.title}"${isSuperAdminOverride ? ' (Super Admin thao tác thay)' : ''}`,
+      performedBy: cleanPerformedBy,
+      performedByName,
+      changes: {
+        before: { completed: prevStatus },
+        after: { completed }
+      }
+    });
   } catch (error) {
     handleFirestoreError(error, OperationType.UPDATE, `${NOTIFICATIONS_COLLECTION}/${notificationId}`);
     throw error;
@@ -570,12 +915,31 @@ export async function saveDeletedRecordsToFirestore(deletedAppIds: string[], del
 }
 
 /**
- * Xóa 1 thông báo khỏi Firestore
+ * Xóa 1 thông báo khỏi Firestore (kèm ghi nhận Audit Log)
  */
 export async function deleteNotificationFromFirestore(id: string): Promise<void> {
   const docRef = doc(db, NOTIFICATIONS_COLLECTION, id);
+  let notiTitle = id;
+  try {
+    const snap = await getDoc(docRef);
+    if (snap.exists()) {
+      notiTitle = snap.data()?.title || id;
+    }
+  } catch {
+    // ignore
+  }
+
   try {
     await deleteDoc(docRef);
+
+    // Ghi nhật ký kiểm toán hệ thống
+    await recordSystemAuditLog({
+      action: 'DELETE',
+      targetType: 'notification',
+      targetId: id,
+      targetTitle: notiTitle,
+      description: `Xóa thông báo: "${notiTitle}" (ID: ${id})`
+    });
   } catch (error) {
     handleFirestoreError(error, OperationType.DELETE, `${NOTIFICATIONS_COLLECTION}/${id}`);
     throw error;
@@ -983,6 +1347,26 @@ export async function updateUserRoleInFirestore(
       // ignore
     }
   }
+
+  // 3. Ghi nhật ký kiểm toán hệ thống
+  await recordSystemAuditLog({
+    action: newRole === 'admin' ? 'CREATE' : 'DELETE',
+    targetType: 'admin_account',
+    targetId: cleanEmail,
+    targetTitle: existingName || cleanEmail,
+    description:
+      newRole === 'admin'
+        ? `Cấp quyền Quản trị viên (Admin) cho tài khoản: "${cleanEmail}"`
+        : `Thu hồi quyền Quản trị viên của tài khoản: "${cleanEmail}" (chuyển về quyền User thông thường)`,
+    performedBy: updatedBy,
+    changes: {
+      before: {
+        role: newRole === 'admin' ? 'user' : 'admin',
+        status: newRole === 'admin' ? 'revoked' : 'active'
+      },
+      after: { role: newRole, status: newStatus }
+    }
+  });
 
   // Lấy danh sách mới nhất xác nhận từ Firestore
   return await getAdminUsersFromFirestore();

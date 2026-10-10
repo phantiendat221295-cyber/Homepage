@@ -84,6 +84,24 @@
         "lastLogin": { "type": "string", "maxLength": 50 }
       },
       "required": ["email", "role"]
+    },
+    "SystemAuditLog": {
+      "title": "SystemAuditLog",
+      "description": "Nhật ký kiểm toán toàn hệ thống ghi nhận mọi thao tác quản trị",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "timestamp": { "type": "string", "maxLength": 50 },
+        "performedBy": { "type": "string", "maxLength": 100 },
+        "performedByName": { "type": "string", "maxLength": 100 },
+        "performedByUid": { "type": "string", "maxLength": 128 },
+        "action": { "type": "string", "enum": ["CREATE", "UPDATE", "DELETE", "ASSIGN", "TOGGLE_CHECKLIST", "CONFIG_CHANGE"] },
+        "targetType": { "type": "string", "enum": ["app", "notification", "admin_account", "portal_config", "support_ticket"] },
+        "targetId": { "type": "string", "maxLength": 128 },
+        "targetTitle": { "type": "string", "maxLength": 200 },
+        "description": { "type": "string", "maxLength": 1000 }
+      },
+      "required": ["timestamp", "performedBy", "action", "targetType", "targetId", "description"]
     }
   },
   "firestore": {
@@ -106,6 +124,10 @@
     "/admin_users/{adminId}": {
       "schema": "AdminUser",
       "description": "Danh sách tài khoản Quản trị viên được cấp quyền"
+    },
+    "/system_audit_logs/{logId}": {
+      "schema": "SystemAuditLog",
+      "description": "Nhật ký kiểm toán hoạt động quản trị của toàn hệ thống"
     }
   }
 }

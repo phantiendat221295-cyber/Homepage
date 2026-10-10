@@ -136,3 +136,42 @@ export interface GoogleSheetsConfig {
   autoSync: boolean;
   syncError?: string;
 }
+
+// ==========================================
+// NHẬT KÝ KIỂM TOÁN HỆ THỐNG (SYSTEM AUDIT LOG)
+// ==========================================
+
+export type AuditActionType =
+  | 'CREATE'
+  | 'UPDATE'
+  | 'DELETE'
+  | 'ASSIGN'
+  | 'TOGGLE_CHECKLIST'
+  | 'CONFIG_CHANGE';
+
+export type AuditTargetType =
+  | 'app'
+  | 'notification'
+  | 'admin_account'
+  | 'portal_config'
+  | 'support_ticket';
+
+export interface SystemAuditLog {
+  id: string;
+  timestamp: string; // ISO string thời điểm thực hiện thao tác
+  performedBy: string; // Email người thực hiện (từ Firebase Auth)
+  performedByName?: string; // Tên hiển thị người thực hiện
+  performedByUid?: string; // UID từ Firebase Auth
+  action: AuditActionType;
+  targetType: AuditTargetType;
+  targetId: string;
+  targetTitle?: string; // Tên tiện ích, tiêu đề thông báo, email admin...
+  description: string; // Nội dung mô tả thao tác bằng tiếng Việt
+  changes?: {
+    before?: Record<string, any>;
+    after?: Record<string, any>;
+    diffFields?: string[];
+  };
+  metadata?: Record<string, any>;
+}
+
