@@ -31,6 +31,34 @@
         { "key": "Content-Type", "value": "image/png" },
         { "key": "Cache-Control", "value": "public, max-age=86400, must-revalidate" }
       ]
+    },
+    {
+      "source": "/favicon-16x16.png",
+      "headers": [
+        { "key": "Content-Type", "value": "image/png" },
+        { "key": "Cache-Control", "value": "public, max-age=86400, must-revalidate" }
+      ]
+    },
+    {
+      "source": "/favicon-32x32.png",
+      "headers": [
+        { "key": "Content-Type", "value": "image/png" },
+        { "key": "Cache-Control", "value": "public, max-age=86400, must-revalidate" }
+      ]
+    },
+    {
+      "source": "/favicon-96x96.png",
+      "headers": [
+        { "key": "Content-Type", "value": "image/png" },
+        { "key": "Cache-Control", "value": "public, max-age=86400, must-revalidate" }
+      ]
+    },
+    {
+      "source": "/manifest.json",
+      "headers": [
+        { "key": "Content-Type", "value": "application/manifest+json" },
+        { "key": "Cache-Control", "value": "public, max-age=86400, must-revalidate" }
+      ]
     }
   ],
   "rewrites": [
