@@ -67,7 +67,12 @@ export const SidebarWidgets: React.FC<SidebarWidgetsProps> = ({
                     {noti.title}
                   </span>
                 </div>
-                <div className="flex items-center gap-1 shrink-0 text-slate-400 group-hover:text-slate-600">
+                <div className="flex items-center gap-1.5 shrink-0 text-slate-400 group-hover:text-slate-600">
+                  {noti.assignedTo && noti.assignedTo.length > 0 && (
+                    <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-md bg-blue-50 text-blue-700 border border-blue-200">
+                      {Object.values(noti.userChecklists || {}).filter(u => u.completed).length}/{noti.assignedTo.length}
+                    </span>
+                  )}
                   <span className="text-[11px] sm:text-xs">{noti.date}</span>
                   <ChevronRight size={13} className="transition-transform group-hover:translate-x-0.5" />
                 </div>

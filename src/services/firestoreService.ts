@@ -412,6 +412,109 @@ export async function saveNotificationToFirestore(item: NotificationItem): Promi
 }
 
 /**
+ * Cập nhật trạng thái checklist của một người dùng cụ thể trong thông báo:
+ * - Bảo đảm người dùng được giao chỉ sửa của chính mình
+ * - Super Admin được quyền quản lý và đánh dấu thay mọi người
+ * - Tự động ghi nhận audit log chi tiết
+ * - Cập nhật đồng thời parent doc và subcollection /user_status
+ */
+export async function updateUserChecklistStatusInFirestore(
+  notificationId: string,
+  targetEmail: string,
+  completed: boolean,
+  performedBy: string,
+  performedByName?: string,
+  isSuperAdminOverride = false
+): Promise<void> {
+  const cleanTargetEmail = targetEmail.toLowerCase().trim();
+  const cleanPerformedBy = performedBy.toLowerCase().trim();
+  const notiRef = doc(db, NOTIFICATIONS_COLLECTION, notificationId);
+
+  try {
+    const snap = await getDoc(notiRef);
+    if (!snap.exists()) {
+      throw new Error('Thông báo không tồn tại trên hệ thống!');
+    }
+
+    const notiData = snap.data() as NotificationItem;
+    const assignedList = (notiData.assignedTo || []).map((e) => e.toLowerCase().trim());
+
+    // Kiểm tra quyền: Phải là Super Admin HOẶC chính chủ nằm trong assignedTo
+    const isSuper =
+      SYSTEM_SUPER_ADMINS.includes(cleanPerformedBy) ||
+      Boolean(auth.currentUser?.email && SYSTEM_SUPER_ADMINS.includes(auth.currentUser.email.toLowerCase().trim()));
+
+    if (!isSuper && cleanPerformedBy !== cleanTargetEmail) {
+      throw new Error('Bạn không có quyền đánh dấu checklist của người dùng khác!');
+    }
+
+    if (!isSuper && !assignedList.includes(cleanTargetEmail)) {
+      throw new Error(`Email "${cleanTargetEmail}" không nằm trong danh sách được phân công của thông báo này.`);
+    }
+
+    const currentChecklists = { ...(notiData.userChecklists || {}) };
+    const prevStatus = Boolean(currentChecklists[cleanTargetEmail]?.completed);
+
+    const nowIso = new Date().toISOString();
+    const updatedStatus = {
+      email: cleanTargetEmail,
+      name: currentChecklists[cleanTargetEmail]?.name || cleanTargetEmail.split('@')[0],
+      uid: currentChecklists[cleanTargetEmail]?.uid || (cleanPerformedBy === cleanTargetEmail ? auth.currentUser?.uid : undefined),
+      completed,
+      completedAt: completed ? nowIso : undefined,
+      completedBy: completed ? (isSuper && cleanPerformedBy !== cleanTargetEmail ? `Super Admin (${cleanPerformedBy})` : cleanPerformedBy) : undefined,
+      updatedAt: nowIso
+    };
+
+    currentChecklists[cleanTargetEmail] = updatedStatus;
+
+    // Tạo bản ghi audit log
+    const auditEntry = {
+      id: `audit_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+      timestamp: nowIso,
+      performedBy: cleanPerformedBy,
+      performedByName: performedByName || cleanPerformedBy,
+      action: isSuper && cleanPerformedBy !== cleanTargetEmail ? ('superadmin_override' as const) : ('toggle_checklist' as const),
+      targetUser: cleanTargetEmail,
+      previousStatus: prevStatus,
+      newStatus: completed,
+      details: completed
+        ? (isSuper && cleanPerformedBy !== cleanTargetEmail ? `Super Admin đánh dấu hoàn thành thay cho ${cleanTargetEmail}` : `Đã hoàn thành công việc`)
+        : (isSuper && cleanPerformedBy !== cleanTargetEmail ? `Super Admin bỏ đánh dấu hoàn thành cho ${cleanTargetEmail}` : `Mở lại công việc`)
+    };
+
+    const currentAuditLogs = Array.isArray(notiData.auditLogs) ? [...notiData.auditLogs] : [];
+    const updatedAuditLogs = [auditEntry, ...currentAuditLogs].slice(0, 50); // Giữ tối đa 50 log gần nhất
+
+    // 1. Cập nhật parent doc
+    await updateDoc(notiRef, {
+      userChecklists: currentChecklists,
+      auditLogs: updatedAuditLogs,
+      updatedAt: nowIso
+    });
+
+    // 2. Cập nhật subcollection /user_status/{cleanTargetEmail}
+    try {
+      const userStatusRef = doc(db, NOTIFICATIONS_COLLECTION, notificationId, 'user_status', cleanTargetEmail);
+      await setDoc(userStatusRef, sanitizeData(updatedStatus), { merge: true });
+    } catch {
+      // ignore
+    }
+
+    // 3. Ghi log vào subcollection /audit_logs/{auditEntry.id}
+    try {
+      const auditLogRef = doc(db, NOTIFICATIONS_COLLECTION, notificationId, 'audit_logs', auditEntry.id);
+      await setDoc(auditLogRef, sanitizeData(auditEntry));
+    } catch {
+      // ignore
+    }
+  } catch (error) {
+    handleFirestoreError(error, OperationType.UPDATE, `${NOTIFICATIONS_COLLECTION}/${notificationId}`);
+    throw error;
+  }
+}
+
+/**
  * Cập nhật checklist của thông báo (Dành cho người được giao hoặc Admin)
  */
 export async function updateNotificationChecklistInFirestore(
@@ -427,6 +530,42 @@ export async function updateNotificationChecklistInFirestore(
   } catch (error) {
     handleFirestoreError(error, OperationType.UPDATE, `${NOTIFICATIONS_COLLECTION}/${id}`);
     throw error;
+  }
+}
+
+/**
+ * Lấy danh sách ID đã xóa từ Firestore để chống tái tạo
+ */
+export async function getDeletedRecordsFromFirestore(): Promise<{ deletedAppIds: string[]; deletedNotiIds: string[] }> {
+  try {
+    const docRef = doc(db, SETTINGS_COLLECTION, 'deleted_records');
+    const snap = await getDoc(docRef);
+    if (snap.exists()) {
+      const data = snap.data();
+      return {
+        deletedAppIds: Array.isArray(data.deletedAppIds) ? data.deletedAppIds : [],
+        deletedNotiIds: Array.isArray(data.deletedNotiIds) ? data.deletedNotiIds : []
+      };
+    }
+  } catch {
+    // ignore
+  }
+  return { deletedAppIds: [], deletedNotiIds: [] };
+}
+
+/**
+ * Lưu danh sách ID đã xóa lên Firestore
+ */
+export async function saveDeletedRecordsToFirestore(deletedAppIds: string[], deletedNotiIds: string[]): Promise<void> {
+  try {
+    const docRef = doc(db, SETTINGS_COLLECTION, 'deleted_records');
+    await setDoc(docRef, {
+      deletedAppIds,
+      deletedNotiIds,
+      updatedAt: new Date().toISOString()
+    }, { merge: true });
+  } catch {
+    // ignore
   }
 }
 

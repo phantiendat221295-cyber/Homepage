@@ -85,18 +85,20 @@ service cloud.firestore {
     // ==========================================
     // 3. SETTINGS & PORTAL CONFIG (settings)
     // ==========================================
-    // portal_config: Đọc công khai để hiển thị logo/cơ sở; Ghi chỉ dành cho Admin
+    // portal_config & deleted_records: Đọc công khai; Ghi chỉ dành cho Admin
     // Các document khác: CHỈ Super Admin mới được đọc/ghi
     match /settings/{settingId} {
-      allow read: if settingId == 'portal_config' || isAdmin();
-      allow write: if isSuperAdmin() || (isAdmin() && settingId == 'portal_config');
+      allow read: if settingId in ['portal_config', 'deleted_records'] || isAdmin();
+      allow write: if isSuperAdmin() || (isAdmin() && settingId in ['portal_config', 'deleted_records']);
     }
 
     // ==========================================
     // 4. NOTIFICATIONS (notifications)
     // ==========================================
     // Sinh viên & Giảng viên đọc thông báo công khai;
-    // Admin có quyền tạo/xóa/sửa; Người dùng được phân công có quyền cập nhật checklist
+    // Admin có quyền tạo/xóa/sửa cấu trúc thông báo;
+    // Người dùng được phân công CHỈ được cập nhật checklist của chính mình;
+    // Super Admin có toàn quyền quản lý và đánh dấu thay.
     match /notifications/{notificationId} {
       allow read: if true;
       allow create, delete: if isAdmin();
@@ -104,8 +106,30 @@ service cloud.firestore {
         isSignedIn() &&
         request.auth.token.email != null &&
         resource.data.assignedTo is list &&
-        request.auth.token.email.lower() in resource.data.assignedTo
+        userEmail() in resource.data.assignedTo &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'checklist', 'userChecklists', 'auditLogs', 'updatedAt', 'syncStatus'
+        ])
       );
+
+      // Subcollection theo dõi trạng thái checklist của từng user (Bảo mật tuyệt đối cấp Document)
+      // Người dùng chỉ được sửa document mang Email hoặc UID của chính họ; Super Admin có toàn quyền
+      match /user_status/{userEmailOrUid} {
+        allow read: if true;
+        allow write: if isSuperAdmin() || (
+          isSignedIn() && (
+            userEmailOrUid == userEmail() ||
+            userEmailOrUid == request.auth.uid
+          )
+        );
+      }
+
+      // Subcollection nhật ký thao tác (Audit Logs): Bất biến - không ai được sửa hoặc xóa
+      match /audit_logs/{logId} {
+        allow read: if true;
+        allow create: if isSignedIn();
+        allow update, delete: if false;
+      }
     }
 
     // ==========================================
