@@ -10,6 +10,7 @@ export interface WebAppItem {
   badge?: string;
   isExternal?: boolean;
   isCustom?: boolean; // Được tạo hoặc chỉnh sửa trên Web
+  orderIndex?: number; // Thứ tự sắp xếp tiện ích do Super Admin thiết lập
   updatedAt?: string;
 }
 
@@ -147,6 +148,7 @@ export type AuditActionType =
   | 'DELETE'
   | 'ASSIGN'
   | 'TOGGLE_CHECKLIST'
+  | 'REORDER'
   | 'CONFIG_CHANGE';
 
 export type AuditTargetType =

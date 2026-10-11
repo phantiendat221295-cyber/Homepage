@@ -14,7 +14,9 @@ import {
   Clock,
   Send,
   RefreshCw,
-  Lock
+  Lock,
+  ListTodo,
+  Loader2
 } from 'lucide-react';
 import { NotificationItem, AdminAccount, UserChecklistStatus } from '../types';
 import { SYSTEM_SUPER_ADMINS } from '../services/firestoreService';
@@ -69,6 +71,8 @@ export const NotificationModal: React.FC<NotificationModalProps> = ({
   // Sub-task checklist (nếu có)
   const taskChecklist = item.checklist || [];
   const completedTasksCount = taskChecklist.filter((c) => c.completed).length;
+  const taskProgressPercent =
+    taskChecklist.length > 0 ? Math.round((completedTasksCount / taskChecklist.length) * 100) : 0;
 
   const handleUserToggle = async (targetEmail: string) => {
     const cleanTarget = targetEmail.toLowerCase().trim();
@@ -225,10 +229,12 @@ export const NotificationModal: React.FC<NotificationModalProps> = ({
                         : isMe
                         ? 'bg-blue-50/80 border-blue-300 hover:border-blue-400'
                         : 'bg-white border-slate-200'
-                    } ${isToggling ? 'opacity-50 pointer-events-none' : ''}`}
+                    } ${isToggling ? 'opacity-60 pointer-events-none' : ''}`}
                   >
                     <div className="mt-0.5 shrink-0">
-                      {isCompleted ? (
+                      {isToggling ? (
+                        <Loader2 size={19} className="text-blue-600 animate-spin" />
+                      ) : isCompleted ? (
                         <CheckCircle2 size={19} className="text-emerald-600 fill-emerald-100" />
                       ) : (
                         <Circle size={19} className={canToggleThis ? 'text-slate-400 hover:text-blue-600' : 'text-slate-300'} />
@@ -241,7 +247,12 @@ export const NotificationModal: React.FC<NotificationModalProps> = ({
                           {userStatus?.name || email.split('@')[0]}
                           {isMe && <span className="ml-1.5 text-[10px] bg-blue-600 text-white px-1.5 py-0.5 rounded-md font-bold">Bạn</span>}
                         </span>
-                        {!canToggleThis && (
+                        {isToggling && (
+                          <span className="text-[10px] text-blue-600 font-bold animate-pulse">
+                            Đang lưu Firestore...
+                          </span>
+                        )}
+                        {!isToggling && !canToggleThis && (
                           <span className="text-[10px] text-slate-400 flex items-center gap-0.5 shrink-0" title="Chỉ người được giao việc hoặc Super Admin mới được tích">
                             <Lock size={10} />
                             <span>Khóa</span>
@@ -275,9 +286,21 @@ export const NotificationModal: React.FC<NotificationModalProps> = ({
         {taskChecklist.length > 0 && (
           <div className="border border-slate-200 rounded-2xl p-4 bg-white space-y-3 shadow-xs">
             <div className="flex items-center justify-between">
-              <span className="text-xs font-bold text-slate-700 uppercase tracking-wider">
-                Nhiệm vụ công việc ({completedTasksCount}/{taskChecklist.length})
-              </span>
+              <div className="flex items-center gap-2 text-xs font-bold text-slate-700 uppercase tracking-wider">
+                <ListTodo size={16} className="text-blue-600" />
+                <span>Nhiệm vụ công việc ({completedTasksCount}/{taskChecklist.length} hoàn thành)</span>
+              </div>
+              <span className="text-xs font-bold text-slate-800">{taskProgressPercent}%</span>
+            </div>
+
+            {/* Progress bar độc lập cho nhiệm vụ */}
+            <div className="w-full bg-slate-100 h-2 rounded-full overflow-hidden">
+              <div
+                className={`h-full transition-all duration-300 ${
+                  taskProgressPercent === 100 ? 'bg-emerald-500' : 'bg-blue-600'
+                }`}
+                style={{ width: `${taskProgressPercent}%` }}
+              />
             </div>
 
             <div className="space-y-2">
@@ -295,19 +318,28 @@ export const NotificationModal: React.FC<NotificationModalProps> = ({
                       cItem.completed
                         ? 'bg-emerald-50/40 border-emerald-200 text-slate-600'
                         : 'bg-slate-50/50 border-slate-200'
-                    } ${isToggling ? 'opacity-50 pointer-events-none' : ''}`}
+                    } ${isToggling ? 'opacity-60 pointer-events-none' : ''}`}
                   >
                     <div className="mt-0.5 shrink-0">
-                      {cItem.completed ? (
+                      {isToggling ? (
+                        <Loader2 size={17} className="text-blue-600 animate-spin" />
+                      ) : cItem.completed ? (
                         <CheckCircle2 size={17} className="text-emerald-600 fill-emerald-100" />
                       ) : (
                         <Circle size={17} className="text-slate-400" />
                       )}
                     </div>
                     <div className="flex-1 min-w-0">
-                      <p className={`text-xs ${cItem.completed ? 'line-through text-slate-500' : 'text-slate-800 font-medium'}`}>
-                        {cItem.text}
-                      </p>
+                      <div className="flex items-center justify-between gap-2">
+                        <p className={`text-xs ${cItem.completed ? 'line-through text-slate-500' : 'text-slate-800 font-medium'}`}>
+                          {cItem.text}
+                        </p>
+                        {isToggling && (
+                          <span className="text-[10px] text-blue-600 font-bold animate-pulse shrink-0">
+                            Đang lưu...
+                          </span>
+                        )}
+                      </div>
                       {cItem.completed && cItem.completedBy && (
                         <span className="text-[10px] text-emerald-700 mt-0.5 block">
                           ✓ Bởi: {cItem.completedBy}

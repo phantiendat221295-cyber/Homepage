@@ -32,7 +32,10 @@ import {
   UserCheck,
   Calendar,
   Download,
-  ClipboardList
+  ClipboardList,
+  ArrowUp,
+  ArrowDown,
+  MoveVertical
 } from 'lucide-react';
 import { DynamicIcon } from './DynamicIcon';
 import { FptPolySchoolLogo } from './FptPolySchoolLogo';
@@ -58,6 +61,7 @@ interface RoleManagementViewProps {
   onAddApp: () => void;
   onEditApp: (app: WebAppItem) => void;
   onDeleteApp: (appId: string) => void;
+  onReorderApps?: (updatedApps: { id: string; orderIndex: number; category?: string }[]) => Promise<void>;
   onResetToDefault: () => void;
   onGoToHome: () => void;
   hasPermissionsSheet: boolean;
@@ -96,6 +100,7 @@ export const RoleManagementView: React.FC<RoleManagementViewProps> = ({
   onAddApp,
   onEditApp,
   onDeleteApp,
+  onReorderApps,
   onResetToDefault,
   onGoToHome,
   hasPermissionsSheet,
@@ -349,10 +354,20 @@ export const RoleManagementView: React.FC<RoleManagementViewProps> = ({
   // Search in table
   const [searchTerm, setSearchTerm] = useState('');
   const [categoryFilter, setCategoryFilter] = useState('all');
+  const [isReordering, setIsReordering] = useState(false);
+  const [reorderSuccessMsg, setReorderSuccessMsg] = useState<string | null>(null);
 
   const categories = Array.from(new Set(apps.map((a) => a.category)));
 
-  const filteredApps = apps.filter((app) => {
+  // Sắp xếp các app theo orderIndex do Super Admin thiết lập
+  const sortedApps = [...apps].sort((a, b) => {
+    const orderA = typeof a.orderIndex === 'number' ? a.orderIndex : 999999;
+    const orderB = typeof b.orderIndex === 'number' ? b.orderIndex : 999999;
+    if (orderA !== orderB) return orderA - orderB;
+    return a.title.localeCompare(b.title, 'vi');
+  });
+
+  const filteredApps = sortedApps.filter((app) => {
     const matchSearch =
       app.title.toLowerCase().includes(searchTerm.toLowerCase()) ||
       app.url.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -360,6 +375,73 @@ export const RoleManagementView: React.FC<RoleManagementViewProps> = ({
     const matchCat = categoryFilter === 'all' || app.category === categoryFilter;
     return matchSearch && matchCat;
   });
+
+  // Hàm chuyển vị trí tiện ích LÊN hoặc XUỐNG trong danh mục
+  const handleMoveApp = async (appId: string, direction: 'up' | 'down') => {
+    if (!onReorderApps || !isSuperAdmin) return;
+    const targetApp = apps.find((a) => a.id === appId);
+    if (!targetApp) return;
+
+    // Lấy danh sách apps cùng category đã sắp xếp
+    const categoryApps = sortedApps.filter((a) => a.category === targetApp.category);
+    const currentIndex = categoryApps.findIndex((a) => a.id === appId);
+    if (currentIndex === -1) return;
+
+    const targetIndex = direction === 'up' ? currentIndex - 1 : currentIndex + 1;
+    if (targetIndex < 0 || targetIndex >= categoryApps.length) return;
+
+    const otherApp = categoryApps[targetIndex];
+
+    // Hoán đổi vị trí
+    const updatedCategoryApps = [...categoryApps];
+    updatedCategoryApps[currentIndex] = otherApp;
+    updatedCategoryApps[targetIndex] = targetApp;
+
+    // Chuẩn hóa orderIndex cho toàn bộ category này
+    const payload = updatedCategoryApps.map((item, idx) => ({
+      id: item.id,
+      orderIndex: idx,
+      category: item.category
+    }));
+
+    setIsReordering(true);
+    try {
+      await onReorderApps(payload);
+      setReorderSuccessMsg(`Đã đổi vị trí tiện ích "${targetApp.title}" thành công!`);
+      setTimeout(() => setReorderSuccessMsg(null), 3000);
+    } catch (err: any) {
+      alert('Lỗi khi lưu thứ tự tiện ích: ' + (err.message || ''));
+    } finally {
+      setIsReordering(false);
+    }
+  };
+
+  // Hàm thay đổi nhanh danh mục của tiện ích (Chuyển sang nhóm khác kèm đưa vào cuối nhóm đó)
+  const handleChangeAppCategory = async (appId: string, newCategory: string) => {
+    if (!onReorderApps || !isSuperAdmin) return;
+    const targetApp = apps.find((a) => a.id === appId);
+    if (!targetApp || targetApp.category === newCategory) return;
+
+    const targetCatApps = sortedApps.filter((a) => a.category === newCategory);
+    const newOrderIndex = targetCatApps.length;
+
+    setIsReordering(true);
+    try {
+      await onReorderApps([
+        {
+          id: appId,
+          orderIndex: newOrderIndex,
+          category: newCategory
+        }
+      ]);
+      setReorderSuccessMsg(`Đã chuyển "${targetApp.title}" sang nhóm "${newCategory}"!`);
+      setTimeout(() => setReorderSuccessMsg(null), 3000);
+    } catch (err: any) {
+      alert('Lỗi chuyển nhóm tiện ích: ' + (err.message || ''));
+    } finally {
+      setIsReordering(false);
+    }
+  };
 
   // Tự động kết xuất nút Google Sign-In chính thức (GIS renderButton)
   useEffect(() => {
@@ -1162,11 +1244,29 @@ export const RoleManagementView: React.FC<RoleManagementViewProps> = ({
                 </select>
               </div>
 
+              {/* Thông báo kết quả đổi thứ tự */}
+              {reorderSuccessMsg && (
+                <div className="p-3 bg-emerald-50 border border-emerald-200 text-emerald-800 rounded-2xl text-xs sm:text-sm font-semibold flex items-center justify-between animate-in fade-in">
+                  <div className="flex items-center gap-2">
+                    <Check size={16} className="text-emerald-600 shrink-0" />
+                    <span>{reorderSuccessMsg}</span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setReorderSuccessMsg(null)}
+                    className="text-emerald-600 hover:text-emerald-800 p-1 cursor-pointer"
+                  >
+                    <X size={14} />
+                  </button>
+                </div>
+              )}
+
               {/* Table */}
               <div className="overflow-x-auto rounded-2xl border border-slate-200">
                 <table className="w-full text-left border-collapse text-xs sm:text-sm">
                   <thead>
                     <tr className="bg-slate-50 text-slate-600 font-bold border-b border-slate-200">
+                      {isSuperAdmin && <th className="py-3 px-3 text-center w-24">Thứ tự</th>}
                       <th className="py-3 px-4">Tiện ích</th>
                       <th className="py-3 px-4">Đường dẫn link (URL)</th>
                       <th className="py-3 px-4">Nhóm danh mục</th>
@@ -1175,75 +1275,134 @@ export const RoleManagementView: React.FC<RoleManagementViewProps> = ({
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100 text-slate-700">
-                    {filteredApps.map((app) => (
-                      <tr key={app.id} className="hover:bg-slate-50/80 transition-colors group">
-                        <td className="py-3 px-4">
-                          <div className="flex items-center gap-2.5">
-                            <div className="w-8 h-8 rounded-lg bg-slate-100 flex items-center justify-center text-slate-600 shrink-0">
-                              <DynamicIcon name={app.icon} size={16} />
+                    {filteredApps.map((app) => {
+                      const categoryApps = sortedApps.filter((a) => a.category === app.category);
+                      const appIndexInCat = categoryApps.findIndex((a) => a.id === app.id);
+                      const isFirstInCat = appIndexInCat === 0;
+                      const isLastInCat = appIndexInCat === categoryApps.length - 1;
+
+                      return (
+                        <tr key={app.id} className="hover:bg-slate-50/80 transition-colors group">
+                          {isSuperAdmin && (
+                            <td className="py-3 px-3 text-center">
+                              <div className="flex items-center justify-center gap-1">
+                                <button
+                                  type="button"
+                                  disabled={isFirstInCat || isReordering}
+                                  onClick={() => handleMoveApp(app.id, 'up')}
+                                  title={isFirstInCat ? 'Đang ở đầu nhóm' : 'Di chuyển lên trên'}
+                                  className={`p-1 rounded-lg border transition-all cursor-pointer ${
+                                    isFirstInCat || isReordering
+                                      ? 'border-slate-100 text-slate-300 cursor-not-allowed bg-slate-50'
+                                      : 'border-slate-200 text-slate-700 bg-white hover:bg-blue-50 hover:text-blue-600 hover:border-blue-300'
+                                  }`}
+                                >
+                                  <ArrowUp size={13} />
+                                </button>
+                                <span className="font-mono text-[11px] text-slate-500 font-bold min-w-[16px]">
+                                  {appIndexInCat + 1}
+                                </span>
+                                <button
+                                  type="button"
+                                  disabled={isLastInCat || isReordering}
+                                  onClick={() => handleMoveApp(app.id, 'down')}
+                                  title={isLastInCat ? 'Đang ở cuối nhóm' : 'Di chuyển xuống dưới'}
+                                  className={`p-1 rounded-lg border transition-all cursor-pointer ${
+                                    isLastInCat || isReordering
+                                      ? 'border-slate-100 text-slate-300 cursor-not-allowed bg-slate-50'
+                                      : 'border-slate-200 text-slate-700 bg-white hover:bg-blue-50 hover:text-blue-600 hover:border-blue-300'
+                                  }`}
+                                >
+                                  <ArrowDown size={13} />
+                                </button>
+                              </div>
+                            </td>
+                          )}
+
+                          <td className="py-3 px-4">
+                            <div className="flex items-center gap-2.5">
+                              <div className="w-8 h-8 rounded-lg bg-slate-100 flex items-center justify-center text-slate-600 shrink-0">
+                                <DynamicIcon name={app.icon} size={16} />
+                              </div>
+                              <div>
+                                <span className="font-bold text-slate-800 block">{app.title}</span>
+                                <span className="text-[11px] text-slate-500 truncate max-w-xs block">
+                                  {app.description}
+                                </span>
+                              </div>
                             </div>
-                            <div>
-                              <span className="font-bold text-slate-800 block">{app.title}</span>
-                              <span className="text-[11px] text-slate-500 truncate max-w-xs block">
-                                {app.description}
+                          </td>
+
+                          <td className="py-3 px-4">
+                            <div className="flex items-center gap-1.5 font-mono text-xs text-blue-600">
+                              <span className="truncate max-w-[220px]">{app.url}</span>
+                              <a
+                                href={app.url}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="hover:text-blue-800"
+                              >
+                                <ExternalLink size={13} />
+                              </a>
+                            </div>
+                          </td>
+
+                          <td className="py-3 px-4">
+                            {isSuperAdmin ? (
+                              <select
+                                value={app.category}
+                                disabled={isReordering}
+                                onChange={(e) => handleChangeAppCategory(app.id, e.target.value)}
+                                className="bg-slate-100/80 hover:bg-slate-100 border border-slate-200 rounded-lg px-2 py-1 text-xs font-semibold text-slate-700 cursor-pointer focus:outline-none focus:border-blue-400"
+                                title="Chuyển sang nhóm danh mục khác"
+                              >
+                                {categories.map((c) => (
+                                  <option key={c} value={c}>
+                                    {c}
+                                  </option>
+                                ))}
+                              </select>
+                            ) : (
+                              <span className="inline-block px-2.5 py-1 rounded-lg bg-slate-100 text-slate-700 text-xs font-semibold">
+                                {app.category}
                               </span>
+                            )}
+                          </td>
+
+                          <td className="py-3 px-4">
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold bg-amber-100 text-amber-900 border border-amber-200">
+                              <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse" />
+                              Firestore Cloud
+                            </span>
+                          </td>
+
+                          <td className="py-3 px-4 text-right">
+                            <div className="flex items-center justify-end gap-1.5">
+                              <button
+                                type="button"
+                                onClick={() => onEditApp(app)}
+                                className="p-1.5 rounded-lg bg-slate-100 hover:bg-blue-50 text-slate-600 hover:text-blue-600 transition-colors cursor-pointer"
+                                title="Chỉnh sửa tên và link"
+                              >
+                                <Edit3 size={15} />
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  if (window.confirm(`Bạn có chắc muốn xóa tiện ích "${app.title}" không?`)) {
+                                    onDeleteApp(app.id);
+                                  }
+                                }}
+                                className="p-1.5 rounded-lg bg-slate-100 hover:bg-rose-50 text-slate-600 hover:text-rose-600 transition-colors cursor-pointer"
+                                title="Xóa tiện ích"
+                              >
+                                <Trash2 size={15} />
+                              </button>
                             </div>
-                          </div>
-                        </td>
-
-                        <td className="py-3 px-4">
-                          <div className="flex items-center gap-1.5 font-mono text-xs text-blue-600">
-                            <span className="truncate max-w-[220px]">{app.url}</span>
-                            <a
-                              href={app.url}
-                              target="_blank"
-                              rel="noreferrer"
-                              className="hover:text-blue-800"
-                            >
-                              <ExternalLink size={13} />
-                            </a>
-                          </div>
-                        </td>
-
-                        <td className="py-3 px-4">
-                          <span className="inline-block px-2.5 py-1 rounded-lg bg-slate-100 text-slate-700 text-xs font-semibold">
-                            {app.category}
-                          </span>
-                        </td>
-
-                        <td className="py-3 px-4">
-                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold bg-amber-100 text-amber-900 border border-amber-200">
-                            <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse" />
-                            Firestore Cloud
-                          </span>
-                        </td>
-
-                        <td className="py-3 px-4 text-right">
-                          <div className="flex items-center justify-end gap-1.5">
-                            <button
-                              type="button"
-                              onClick={() => onEditApp(app)}
-                              className="p-1.5 rounded-lg bg-slate-100 hover:bg-blue-50 text-slate-600 hover:text-blue-600 transition-colors cursor-pointer"
-                              title="Chỉnh sửa tên và link"
-                            >
-                              <Edit3 size={15} />
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => {
-                                if (window.confirm(`Bạn có chắc muốn xóa tiện ích "${app.title}" không?`)) {
-                                  onDeleteApp(app.id);
-                                }
-                              }}
-                              className="p-1.5 rounded-lg bg-slate-100 hover:bg-rose-50 text-slate-600 hover:text-rose-600 transition-colors cursor-pointer"
-                              title="Xóa tiện ích"
-                            >
-                              <Trash2 size={15} />
-                            </button>
-                          </div>
-                        </td>
-                      </tr>
-                    ))}
+                          </td>
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>

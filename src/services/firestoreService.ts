@@ -354,7 +354,8 @@ export async function saveAppToFirestore(app: WebAppItem): Promise<void> {
         'icon',
         'colorTheme',
         'badge',
-        'description'
+        'description',
+        'orderIndex'
       ];
       for (const f of checkFields) {
         if (prevApp[f] !== app[f]) {
@@ -422,6 +423,48 @@ export async function deleteAppFromFirestore(appId: string): Promise<void> {
     });
   } catch (error) {
     handleFirestoreError(error, OperationType.DELETE, `${APPS_COLLECTION}/${appId}`);
+    throw error;
+  }
+}
+
+/**
+ * Cập nhật thứ tự hiển thị (orderIndex) của danh sách tiện ích trên Firestore (Super Admin)
+ */
+export async function reorderAppsInFirestore(
+  updatedApps: { id: string; orderIndex: number; category?: string }[],
+  summaryDescription?: string
+): Promise<void> {
+  if (!updatedApps || updatedApps.length === 0) return;
+
+  try {
+    const batch = writeBatch(db);
+    for (const item of updatedApps) {
+      const docRef = doc(db, APPS_COLLECTION, item.id);
+      const updateData: Record<string, any> = {
+        orderIndex: item.orderIndex,
+        updatedAt: new Date().toISOString()
+      };
+      if (item.category) {
+        updateData.category = item.category;
+      }
+      batch.update(docRef, updateData);
+    }
+    await batch.commit();
+
+    // Ghi nhật ký kiểm toán hệ thống
+    await recordSystemAuditLog({
+      action: 'REORDER',
+      targetType: 'app',
+      targetId: 'multiple',
+      targetTitle: 'Sắp xếp tiện ích webapps',
+      description: summaryDescription || `Super Admin đã thay đổi thứ tự của ${updatedApps.length} tiện ích`,
+      metadata: {
+        totalReordered: updatedApps.length,
+        items: updatedApps.map((u) => ({ id: u.id, orderIndex: u.orderIndex, category: u.category }))
+      }
+    });
+  } catch (error) {
+    handleFirestoreError(error, OperationType.WRITE, APPS_COLLECTION);
     throw error;
   }
 }

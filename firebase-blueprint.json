@@ -16,6 +16,7 @@
         "badge": { "type": "string", "maxLength": 50 },
         "isExternal": { "type": "boolean" },
         "isCustom": { "type": "boolean" },
+        "orderIndex": { "type": "number" },
         "updatedAt": { "type": "string", "maxLength": 50 }
       },
       "required": ["title", "url", "category"]

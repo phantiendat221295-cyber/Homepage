@@ -35,6 +35,7 @@ import {
   subscribeApps,
   saveAppToFirestore,
   deleteAppFromFirestore,
+  reorderAppsInFirestore,
   seedInitialAppsIfEmpty,
   getAppsFromFirestore,
   subscribeTickets,
@@ -762,8 +763,16 @@ export default function App() {
 
   // THÊM/SỬA TIỆN ÍCH TRÊN WEB (Lưu trực tiếp lên Cloud Firestore cho mọi máy thấy ngay lập tức)
   const handleSaveApp = async (updatedApp: WebAppItem) => {
+    // Nếu là tiện ích mới chưa có orderIndex, mặc định xếp vào cuối danh sách của nhóm tương ứng
+    let finalOrderIndex = updatedApp.orderIndex;
+    if (typeof finalOrderIndex !== 'number') {
+      const existingInCat = apps.filter((a) => a.category === updatedApp.category && a.id !== updatedApp.id);
+      finalOrderIndex = existingInCat.length;
+    }
+
     const appWithCustomFlag: WebAppItem = {
       ...updatedApp,
+      orderIndex: finalOrderIndex,
       isCustom: true,
       updatedAt: new Date().toISOString()
     };
@@ -794,6 +803,44 @@ export default function App() {
     // 2. Nếu cấu hình Webhook Google Apps Script, ghi trực tiếp vào Google Sheets
     if (sheetConfig.gasWebhookUrl) {
       pushToGasWebhook(sheetConfig.gasWebhookUrl, { action: 'saveApp', app: appWithCustomFlag });
+    }
+  };
+
+  // SẮP XẾP THỨ TỰ TIỆN ÍCH (Super Admin)
+  const handleReorderApps = async (
+    updatedAppsList: { id: string; orderIndex: number; category?: string }[]
+  ) => {
+    // Cập nhật state giao diện ngay lập tức
+    setApps((prevApps) => {
+      const mapOrder = new Map(updatedAppsList.map((u) => [u.id, u]));
+      const next = prevApps.map((a) => {
+        const found = mapOrder.get(a.id);
+        if (found) {
+          return {
+            ...a,
+            orderIndex: found.orderIndex,
+            category: found.category || a.category,
+            updatedAt: new Date().toISOString()
+          };
+        }
+        return a;
+      });
+      try {
+        localStorage.setItem('fpt_portal_cached_apps', JSON.stringify(next));
+      } catch {
+        // ignore
+      }
+      return next;
+    });
+
+    try {
+      await reorderAppsInFirestore(updatedAppsList);
+      showToast('Đã lưu thứ tự tiện ích lên Cloud Firestore thành công!');
+    } catch (err: any) {
+      console.error('Lỗi lưu thứ tự tiện ích:', err);
+      const fresh = await getAppsFromFirestore();
+      setApps(fresh);
+      throw err;
     }
   };
 
@@ -930,6 +977,7 @@ export default function App() {
     const actorName = currentAdminUser?.name || actorEmail.split('@')[0];
 
     // Cập nhật giao diện tức thì
+    let updatedNotiInstance: NotificationItem | null = null;
     setNotifications((prev) =>
       prev.map((n) => {
         if (n.id === notificationId) {
@@ -946,15 +994,22 @@ export default function App() {
               : undefined,
             updatedAt: new Date().toISOString()
           };
-          return {
+          const updated = {
             ...n,
             userChecklists,
             updatedAt: new Date().toISOString()
           };
+          updatedNotiInstance = updated;
+          return updated;
         }
         return n;
       })
     );
+
+    // Đồng bộ ngay với modal đang mở nếu có
+    if (updatedNotiInstance) {
+      setSelectedNotification(updatedNotiInstance);
+    }
 
     try {
       await updateUserChecklistStatusInFirestore(
@@ -970,6 +1025,8 @@ export default function App() {
       console.error('Lỗi cập nhật checklist Firestore:', err);
       const fresh = await getNotificationsFromFirestore();
       setNotifications(fresh);
+      const freshItem = fresh.find((n) => n.id === notificationId);
+      if (freshItem) setSelectedNotification(freshItem);
       throw err;
     }
 
@@ -1011,6 +1068,7 @@ export default function App() {
     setNotifications((prev) =>
       prev.map((n) => (n.id === notificationId ? updatedNoti : n))
     );
+    setSelectedNotification(updatedNoti);
     try {
       localStorage.setItem(
         'fpt_portal_cached_notis',
@@ -1124,14 +1182,6 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-[#F8FAFC] flex flex-col font-sans">
-      {/* Toast Notification */}
-      {toastMessage && (
-        <div className="fixed bottom-6 right-6 z-50 bg-slate-900 text-white text-xs sm:text-sm font-semibold px-4 py-3 rounded-2xl shadow-2xl flex items-center gap-2.5 animate-in slide-in-from-bottom-3 duration-200 border border-slate-700">
-          <Check size={16} className="text-emerald-400 shrink-0" />
-          <span>{toastMessage}</span>
-        </div>
-      )}
-
       {/* Sticky Top Header */}
       <Header
         activeTab={activeTab}
@@ -1171,6 +1221,7 @@ export default function App() {
               setIsEditModalOpen(true);
             }}
             onDeleteApp={handleDeleteApp}
+            onReorderApps={handleReorderApps}
             onResetToDefault={handleResetToDefault}
             onGoToHome={() => setActiveTab('home')}
             hasPermissionsSheet={Boolean(sheetConfig.permissionsCsvUrl)}
@@ -1483,6 +1534,14 @@ export default function App() {
         onDelete={handleDeleteApp}
         categories={existingCategories}
       />
+
+      {/* Global Toast Notification - z-[99999] hiển thị nổi lên trên tất cả modal */}
+      {toastMessage && (
+        <div className="fixed bottom-6 right-6 z-[99999] bg-slate-900/95 text-white text-xs sm:text-sm font-semibold px-4 py-3 rounded-2xl shadow-2xl flex items-center gap-2.5 animate-in slide-in-from-bottom-3 duration-200 border border-slate-700 backdrop-blur-xs pointer-events-auto">
+          <Check size={16} className="text-emerald-400 shrink-0" />
+          <span>{toastMessage}</span>
+        </div>
+      )}
     </div>
   );
 }
