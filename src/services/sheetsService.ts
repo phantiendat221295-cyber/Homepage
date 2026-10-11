@@ -692,27 +692,51 @@ export const mergeAppsSafely = (
       if (existingById.isCustom) {
         // Giữ nguyên web
       } else {
-        // Cập nhật nhẹ thông tin từ Sheet nhưng giữ nguyên thuộc tính Web
-        mergedMap.set(sheetItem.id, {
+        // Cập nhật nhẹ thông tin từ Sheet nhưng giữ nguyên thuộc tính Web và orderIndex
+        mergedMap.set(existingById.id, {
           ...sheetItem,
           id: existingById.id,
+          orderIndex: typeof existingById.orderIndex === 'number' ? existingById.orderIndex : sheetItem.orderIndex,
           updatedAt: new Date().toISOString()
         });
       }
     } else if (existingByContent) {
-      // Đã có tiện ích tương tự trên Web -> giữ nguyên tiện ích web
+      // Đã có tiện ích tương tự trên Web -> giữ nguyên thuộc tính Web và orderIndex
+      if (!existingByContent.isCustom) {
+        mergedMap.set(existingByContent.id, {
+          ...sheetItem,
+          id: existingByContent.id,
+          orderIndex: typeof existingByContent.orderIndex === 'number' ? existingByContent.orderIndex : sheetItem.orderIndex,
+          updatedAt: new Date().toISOString()
+        });
+      }
     } else {
-      // Tiện ích mới hoàn toàn từ Sheet -> Thêm vào danh sách
+      // Tiện ích mới hoàn toàn từ Sheet -> Thêm vào cuối danh mục
+      const currentInCat = Array.from(mergedMap.values()).filter((a) => a.category === sheetItem.category);
+      const maxOrder = currentInCat.reduce(
+        (max, a) => Math.max(max, typeof a.orderIndex === 'number' ? a.orderIndex : -1),
+        -1
+      );
+      const newOrder = maxOrder >= 0 ? maxOrder + 1 : currentInCat.length;
+
       mergedMap.set(sheetItem.id, {
         ...sheetItem,
+        orderIndex: newOrder,
         updatedAt: new Date().toISOString()
       });
       addedCount++;
     }
   });
 
+  const mergedList = Array.from(mergedMap.values()).sort((a, b) => {
+    const orderA = typeof a.orderIndex === 'number' ? a.orderIndex : 999999;
+    const orderB = typeof b.orderIndex === 'number' ? b.orderIndex : 999999;
+    if (orderA !== orderB) return orderA - orderB;
+    return (a.title || '').localeCompare(b.title || '', 'vi');
+  });
+
   return {
-    merged: Array.from(mergedMap.values()),
+    merged: mergedList,
     addedCount,
     keptCount
   };

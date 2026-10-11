@@ -78,16 +78,23 @@ export const CategorySection: React.FC<CategorySectionProps> = ({
 
       {/* Grid */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        {apps.map((app) => (
-          <AppCard
-            key={app.id}
-            app={app}
-            onOpen={onAppClick}
-            isAdmin={isAdmin}
-            onEdit={onEditApp}
-            onDelete={onDeleteApp}
-          />
-        ))}
+        {[...apps]
+          .sort((a, b) => {
+            const orderA = typeof a.orderIndex === 'number' ? a.orderIndex : 999999;
+            const orderB = typeof b.orderIndex === 'number' ? b.orderIndex : 999999;
+            if (orderA !== orderB) return orderA - orderB;
+            return (a.title || '').localeCompare(b.title || '', 'vi');
+          })
+          .map((app) => (
+            <AppCard
+              key={app.id}
+              app={app}
+              onOpen={onAppClick}
+              isAdmin={isAdmin}
+              onEdit={onEditApp}
+              onDelete={onDeleteApp}
+            />
+          ))}
 
         {isAdmin && onAddAppToCategory && (
           <button

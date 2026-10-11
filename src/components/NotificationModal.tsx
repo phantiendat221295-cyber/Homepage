@@ -30,8 +30,8 @@ interface NotificationModalProps {
     userEmail: string,
     completed: boolean,
     isSuperAdminOverride: boolean
-  ) => Promise<void> | void;
-  onToggleChecklistItem?: (notificationId: string, itemId: string) => Promise<void> | void;
+  ) => Promise<any> | any;
+  onToggleChecklistItem?: (notificationId: string, itemId: string) => Promise<any> | any;
   onRetrySyncNotification?: (notificationId: string) => Promise<void> | void;
 }
 
@@ -43,24 +43,31 @@ export const NotificationModal: React.FC<NotificationModalProps> = ({
   onToggleChecklistItem,
   onRetrySyncNotification
 }) => {
+  const [localItem, setLocalItem] = useState<NotificationItem | null>(item);
   const [permError, setPermError] = useState<string | null>(null);
   const [togglingEmail, setTogglingEmail] = useState<string | null>(null);
   const [togglingTaskId, setTogglingTaskId] = useState<string | null>(null);
   const [showAuditLogs, setShowAuditLogs] = useState(false);
   const [isRetryingSync, setIsRetryingSync] = useState(false);
 
+  // Đồng bộ mỗi khi props item từ Firestore / App thay đổi
+  React.useEffect(() => {
+    setLocalItem(item);
+  }, [item]);
+
   if (!item) return null;
 
+  const currentNoti = localItem || item;
   const currentUserEmail = (currentAdminUser?.email || '').toLowerCase().trim();
   const isSuperAdmin =
     Boolean(currentAdminUser?.isSuperAdmin) ||
     SYSTEM_SUPER_ADMINS.includes(currentUserEmail);
 
-  const assignedList = (item.assignedTo || []).map((e) => e.toLowerCase().trim());
+  const assignedList = (currentNoti.assignedTo || []).map((e) => e.toLowerCase().trim());
   const isAssignedToMe = Boolean(currentUserEmail) && assignedList.includes(currentUserEmail);
 
-  // Danh sách checklist người dùng
-  const userChecklistsMap: Record<string, UserChecklistStatus> = item.userChecklists || {};
+  // CHỈ SỐ 1: TIẾN ĐỘ NGƯỜI NHẬN (ĐỘC LẬP)
+  const userChecklistsMap: Record<string, UserChecklistStatus> = currentNoti.userChecklists || {};
   const totalAssigned = assignedList.length;
   const completedAssigneesCount = assignedList.filter(
     (email) => userChecklistsMap[email]?.completed === true
@@ -68,14 +75,18 @@ export const NotificationModal: React.FC<NotificationModalProps> = ({
   const userProgressPercent =
     totalAssigned > 0 ? Math.round((completedAssigneesCount / totalAssigned) * 100) : 0;
 
-  // Sub-task checklist (nếu có)
-  const taskChecklist = item.checklist || [];
-  const completedTasksCount = taskChecklist.filter((c) => c.completed).length;
+  // CHỈ SỐ 2: TIẾN ĐỘ NHIỆM VỤ CÔNG VIỆC (ĐỘC LẬP)
+  // Nếu có 2 nhiệm vụ và xong 1 -> hiển thị 1/2 và 50%
+  const taskChecklist = currentNoti.checklist || [];
+  const totalTasks = taskChecklist.length;
+  const completedTasksCount = taskChecklist.filter((c) => Boolean(c.completed)).length;
   const taskProgressPercent =
-    taskChecklist.length > 0 ? Math.round((completedTasksCount / taskChecklist.length) * 100) : 0;
+    totalTasks > 0 ? Math.round((completedTasksCount / totalTasks) * 100) : 0;
 
   const handleUserToggle = async (targetEmail: string) => {
     const cleanTarget = targetEmail.toLowerCase().trim();
+    if (togglingEmail === cleanTarget) return;
+
     const canToggleThis = isSuperAdmin || (Boolean(currentUserEmail) && currentUserEmail === cleanTarget);
 
     if (!canToggleThis) {
@@ -99,15 +110,20 @@ export const NotificationModal: React.FC<NotificationModalProps> = ({
     setPermError(null);
     setTogglingEmail(cleanTarget);
     try {
-      await onToggleUserChecklist(item.id, cleanTarget, nextStatus, isOverride);
+      const res = await onToggleUserChecklist(currentNoti.id, cleanTarget, nextStatus, isOverride);
+      if (res && typeof res === 'object') {
+        setLocalItem(res as NotificationItem);
+      }
     } catch (err: any) {
-      setPermError('Không thể cập nhật trạng thái checklist: ' + (err.message || ''));
+      setPermError('Không thể cập nhật trạng thái checklist: ' + (err.message || 'Lỗi lưu Firestore'));
     } finally {
       setTogglingEmail(null);
     }
   };
 
   const handleTaskToggle = async (itemId: string) => {
+    if (togglingTaskId === itemId) return;
+
     const canToggle = isSuperAdmin || isAssignedToMe;
     if (!canToggle) {
       setPermError('Chỉ người dùng được phân công trong thông báo này hoặc Super Admin mới được tích chọn công việc.');
@@ -119,9 +135,12 @@ export const NotificationModal: React.FC<NotificationModalProps> = ({
     setPermError(null);
     setTogglingTaskId(itemId);
     try {
-      await onToggleChecklistItem(item.id, itemId);
+      const res = await onToggleChecklistItem(currentNoti.id, itemId);
+      if (res && typeof res === 'object') {
+        setLocalItem(res as NotificationItem);
+      }
     } catch (err: any) {
-      setPermError('Lỗi cập nhật checklist: ' + (err.message || ''));
+      setPermError('Lỗi cập nhật checklist nhiệm vụ: ' + (err.message || 'Lỗi lưu Firestore'));
     } finally {
       setTogglingTaskId(null);
     }
@@ -131,7 +150,7 @@ export const NotificationModal: React.FC<NotificationModalProps> = ({
     if (!onRetrySyncNotification) return;
     setIsRetryingSync(true);
     try {
-      await onRetrySyncNotification(item.id);
+      await onRetrySyncNotification(currentNoti.id);
     } finally {
       setIsRetryingSync(false);
     }
@@ -283,12 +302,12 @@ export const NotificationModal: React.FC<NotificationModalProps> = ({
         )}
 
         {/* PHẦN 2: CHECKLIST NHIỆM VỤ CỤ THỂ (NẾU CÓ) */}
-        {taskChecklist.length > 0 && (
+        {totalTasks > 0 && (
           <div className="border border-slate-200 rounded-2xl p-4 bg-white space-y-3 shadow-xs">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2 text-xs font-bold text-slate-700 uppercase tracking-wider">
                 <ListTodo size={16} className="text-blue-600" />
-                <span>Nhiệm vụ công việc ({completedTasksCount}/{taskChecklist.length} hoàn thành)</span>
+                <span>Nhiệm vụ công việc ({completedTasksCount}/{totalTasks} hoàn thành)</span>
               </div>
               <span className="text-xs font-bold text-slate-800">{taskProgressPercent}%</span>
             </div>
@@ -336,13 +355,14 @@ export const NotificationModal: React.FC<NotificationModalProps> = ({
                         </p>
                         {isToggling && (
                           <span className="text-[10px] text-blue-600 font-bold animate-pulse shrink-0">
-                            Đang lưu...
+                            Đang lưu Firestore...
                           </span>
                         )}
                       </div>
-                      {cItem.completed && cItem.completedBy && (
-                        <span className="text-[10px] text-emerald-700 mt-0.5 block">
-                          ✓ Bởi: {cItem.completedBy}
+                      {cItem.completed && (
+                        <span className="text-[10px] text-emerald-700 mt-0.5 block font-medium">
+                          ✓ Đã hoàn thành{cItem.completedBy ? ` bởi ${cItem.completedBy}` : ''}
+                          {cItem.completedAt ? ` (${new Date(cItem.completedAt).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })})` : ''}
                         </span>
                       )}
                     </div>
@@ -362,7 +382,7 @@ export const NotificationModal: React.FC<NotificationModalProps> = ({
         )}
 
         {/* PHẦN 3: LỊCH SỬ THAO TÁC (AUDIT LOGS) */}
-        {item.auditLogs && item.auditLogs.length > 0 && (
+        {currentNoti.auditLogs && currentNoti.auditLogs.length > 0 && (
           <div className="border border-slate-200 rounded-2xl p-3 bg-slate-50/60 space-y-2">
             <button
               type="button"
@@ -371,7 +391,7 @@ export const NotificationModal: React.FC<NotificationModalProps> = ({
             >
               <span className="flex items-center gap-1.5">
                 <History size={14} className="text-slate-500" />
-                <span>Lịch sử thao tác ({item.auditLogs.length} lần cập nhật)</span>
+                <span>Lịch sử thao tác ({currentNoti.auditLogs.length} lần cập nhật)</span>
               </span>
               <span className="text-[10px] text-blue-600 underline">
                 {showAuditLogs ? 'Thu gọn' : 'Xem chi tiết'}
@@ -380,7 +400,7 @@ export const NotificationModal: React.FC<NotificationModalProps> = ({
 
             {showAuditLogs && (
               <div className="max-h-36 overflow-y-auto space-y-1.5 pt-2 border-t border-slate-200 text-[11px]">
-                {item.auditLogs.map((log) => (
+                {currentNoti.auditLogs.map((log) => (
                   <div key={log.id} className="p-2 rounded-lg bg-white border border-slate-200 space-y-0.5">
                     <div className="flex items-center justify-between text-[10px] text-slate-400">
                       <span className="font-semibold text-slate-700">{log.performedBy}</span>

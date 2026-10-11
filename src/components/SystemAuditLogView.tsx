@@ -33,6 +33,9 @@ interface SystemAuditLogViewProps {
 export const SystemAuditLogView: React.FC<SystemAuditLogViewProps> = () => {
   const [logs, setLogs] = useState<SystemAuditLog[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [loadedLimit, setLoadedLimit] = useState(50);
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedTarget, setSelectedTarget] = useState<string>('all');
   const [selectedAction, setSelectedAction] = useState<string>('all');
@@ -42,31 +45,74 @@ export const SystemAuditLogView: React.FC<SystemAuditLogViewProps> = () => {
   const [currentPage, setCurrentPage] = useState(1);
   const itemsPerPage = 15;
 
-  // Lắng nghe realtime từ Firestore
+  // Lắng nghe realtime từ Firestore với giới hạn phân trang
   useEffect(() => {
     setIsLoading(true);
+    setErrorMessage(null);
+
+    let isMounted = true;
     const unsubscribe = subscribeSystemAuditLogs(
       (items) => {
+        if (!isMounted) return;
         setLogs(items);
         setIsLoading(false);
+        setErrorMessage(null);
       },
-      () => {
-        // Fallback đọc một lần nếu subscribe gặp vấn đề quyền
-        getSystemAuditLogsFromFirestore(200).then((items) => {
-          setLogs(items);
-          setIsLoading(false);
-        });
-      }
+      (err) => {
+        if (!isMounted) return;
+        console.error('[SystemAuditLogView Realtime Error]:', err);
+        // Fallback đọc một lần nếu subscribe gặp lỗi
+        getSystemAuditLogsFromFirestore(loadedLimit)
+          .then((items) => {
+            if (!isMounted) return;
+            setLogs(items);
+            setIsLoading(false);
+            setErrorMessage(null);
+          })
+          .catch((fallbackErr) => {
+            if (!isMounted) return;
+            console.error('[SystemAuditLogView Fallback Error]:', fallbackErr);
+            setIsLoading(false);
+            const msg = fallbackErr?.message || String(fallbackErr);
+            if (msg.toLowerCase().includes('permission') || msg.toLowerCase().includes('insufficient')) {
+              setErrorMessage('Không có quyền đọc nhật ký kiểm toán hệ thống. Chỉ tài khoản Super Admin đã xác thực mới có quyền truy cập collection này.');
+            } else {
+              setErrorMessage('Không thể tải nhật ký kiểm toán từ Firestore: ' + msg);
+            }
+          });
+      },
+      loadedLimit
     );
 
-    return () => unsubscribe();
-  }, []);
+    return () => {
+      isMounted = false;
+      unsubscribe();
+    };
+  }, [loadedLimit]);
 
   const handleManualRefresh = async () => {
-    setIsLoading(true);
-    const items = await getSystemAuditLogsFromFirestore(200);
-    setLogs(items);
-    setIsLoading(false);
+    setIsRefreshing(true);
+    setErrorMessage(null);
+    try {
+      const items = await getSystemAuditLogsFromFirestore(loadedLimit);
+      setLogs(items);
+      setErrorMessage(null);
+    } catch (err: any) {
+      console.error('[SystemAuditLogView Manual Refresh Error]:', err);
+      const msg = err?.message || String(err);
+      if (msg.toLowerCase().includes('permission') || msg.toLowerCase().includes('insufficient')) {
+        setErrorMessage('Không có quyền đọc nhật ký kiểm toán hệ thống. Vui lòng xác thực tài khoản Super Admin.');
+      } else {
+        setErrorMessage('Không thể làm mới nhật ký kiểm toán: ' + msg);
+      }
+    } finally {
+      setIsRefreshing(false);
+      setIsLoading(false);
+    }
+  };
+
+  const handleLoadMore = () => {
+    setLoadedLimit((prev) => prev + 50);
   };
 
   const toggleExpand = (id: string) => {
@@ -442,10 +488,70 @@ export const SystemAuditLogView: React.FC<SystemAuditLogViewProps> = () => {
 
       {/* Danh sách nhật ký */}
       <div className="bg-white rounded-2xl shadow-sm border border-slate-200/80 overflow-hidden">
-        {isLoading ? (
+        {errorMessage && logs.length > 0 && (
+          <div className="p-3 bg-rose-50 border-b border-rose-200 text-rose-800 text-xs flex items-center justify-between gap-3">
+            <div className="flex items-center gap-2">
+              <ShieldAlert size={16} className="text-rose-600 shrink-0" />
+              <span>{errorMessage}</span>
+            </div>
+            <button
+              type="button"
+              onClick={handleManualRefresh}
+              className="text-xs font-bold text-rose-700 underline hover:text-rose-900 cursor-pointer shrink-0"
+            >
+              Thử lại
+            </button>
+          </div>
+        )}
+
+        {isLoading && logs.length === 0 ? (
           <div className="p-12 text-center text-slate-400 space-y-3">
             <RefreshCw size={28} className="animate-spin mx-auto text-blue-500" />
-            <p className="text-sm font-medium">Đang tải nhật ký kiểm toán từ Firestore...</p>
+            <p className="text-sm font-semibold text-slate-700">Đang tải nhật ký kiểm toán từ Firestore...</p>
+            <p className="text-xs text-slate-400 max-w-sm mx-auto">
+              Hệ thống đang truy vấn các bản ghi mới nhất từ collection system_audit_logs dành riêng cho Super Admin.
+            </p>
+          </div>
+        ) : errorMessage && logs.length === 0 ? (
+          <div className="p-12 text-center text-slate-500 space-y-4">
+            <div className="w-14 h-14 rounded-2xl bg-rose-50 text-rose-500 mx-auto flex items-center justify-center border border-rose-200">
+              <ShieldAlert size={28} />
+            </div>
+            <div className="space-y-1">
+              <h4 className="text-base font-bold text-slate-800">Không thể tải nhật ký kiểm toán</h4>
+              <p className="text-xs sm:text-sm text-rose-600 font-medium max-w-md mx-auto">
+                {errorMessage}
+              </p>
+              <p className="text-xs text-slate-400 max-w-md mx-auto pt-1">
+                Lưu ý: Nhật ký toàn hệ thống được bảo mật nghiêm ngặt và chỉ cho phép tài khoản Super Admin đọc dữ liệu.
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={handleManualRefresh}
+              disabled={isLoading || isRefreshing}
+              className="px-5 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold transition-all shadow-md cursor-pointer inline-flex items-center gap-2"
+            >
+              <RefreshCw size={14} className={isRefreshing ? 'animate-spin' : ''} />
+              <span>Thử lại kết nối</span>
+            </button>
+          </div>
+        ) : logs.length === 0 ? (
+          <div className="p-12 text-center text-slate-400 space-y-3">
+            <div className="w-14 h-14 rounded-2xl bg-slate-100 text-slate-400 mx-auto flex items-center justify-center">
+              <FileText size={28} />
+            </div>
+            <h4 className="text-base font-bold text-slate-700">Chưa có bản ghi nhật ký kiểm toán nào</h4>
+            <p className="text-xs sm:text-sm text-slate-400 max-w-sm mx-auto">
+              Hệ thống chưa ghi nhận thao tác quản trị nào. Khi các Admin tạo, sửa tiện ích hoặc cập nhật checklist, các bản ghi sẽ xuất hiện tự động tại đây.
+            </p>
+            <button
+              type="button"
+              onClick={handleManualRefresh}
+              className="px-4 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold transition-colors cursor-pointer"
+            >
+              Kiểm tra lại
+            </button>
           </div>
         ) : filteredLogs.length === 0 ? (
           <div className="p-12 text-center text-slate-400 space-y-3">
@@ -574,20 +680,32 @@ export const SystemAuditLogView: React.FC<SystemAuditLogViewProps> = () => {
           </div>
         )}
 
-        {/* Phân trang dưới đáy */}
-        {filteredLogs.length > 0 && (
+        {/* Phân trang dưới đáy & Nút tải thêm */}
+        {logs.length > 0 && (
           <div className="p-4 bg-slate-50/80 border-t border-slate-200 flex flex-col sm:flex-row items-center justify-between gap-3 text-xs">
-            <div className="text-slate-500">
-              Hiển thị{' '}
-              <span className="font-bold text-slate-800">
-                {(currentPage - 1) * itemsPerPage + 1}
-              </span>{' '}
-              đến{' '}
-              <span className="font-bold text-slate-800">
-                {Math.min(currentPage * itemsPerPage, filteredLogs.length)}
-              </span>{' '}
-              trên tổng số{' '}
-              <span className="font-bold text-slate-800">{filteredLogs.length}</span> bản ghi
+            <div className="flex items-center gap-3">
+              <div className="text-slate-500">
+                Hiển thị{' '}
+                <span className="font-bold text-slate-800">
+                  {filteredLogs.length > 0 ? (currentPage - 1) * itemsPerPage + 1 : 0}
+                </span>{' '}
+                đến{' '}
+                <span className="font-bold text-slate-800">
+                  {Math.min(currentPage * itemsPerPage, filteredLogs.length)}
+                </span>{' '}
+                trên tổng số{' '}
+                <span className="font-bold text-slate-800">{filteredLogs.length}</span> bản ghi (Đã nạp {logs.length})
+              </div>
+
+              <button
+                type="button"
+                onClick={handleLoadMore}
+                disabled={isLoading || isRefreshing}
+                className="px-3 py-1.5 rounded-lg border border-blue-200 bg-blue-50/70 hover:bg-blue-100 text-blue-700 font-bold text-[11px] transition-colors cursor-pointer shrink-0 disabled:opacity-50"
+                title="Tải thêm 50 bản ghi lịch sử tiếp theo từ Firestore"
+              >
+                + Tải thêm 50 bản ghi
+              </button>
             </div>
 
             <div className="flex items-center gap-1.5">

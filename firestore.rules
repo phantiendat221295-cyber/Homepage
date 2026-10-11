@@ -18,10 +18,10 @@ service cloud.firestore {
       return request.auth.token.email.lower();
     }
 
-    // 2 Super Admin khởi tạo vĩnh viễn trong hệ thống
+    // Super Admin khởi tạo vĩnh viễn trong hệ thống
     function isHardcodedSuperAdmin() {
       return isEmailVerified() && (
-        userEmail() in ['datpt60@fpt.edu.vn', 'phantiendat221295@gmail.com']
+        userEmail() in ['datpt60@fpt.edu.vn', 'phantiendat221295@gmail.com', 'phantiendat22121995@gmail.com']
       );
     }
 
@@ -144,11 +144,11 @@ service cloud.firestore {
       // Không ai được phép hạ quyền hoặc xóa 2 tài khoản Super Admin hệ thống
       allow create: if isSuperAdmin();
       allow update: if isSuperAdmin() &&
-                       !(adminId in ['datpt60@fpt.edu.vn', 'phantiendat221295@gmail.com'] &&
+                       !(adminId in ['datpt60@fpt.edu.vn', 'phantiendat221295@gmail.com', 'phantiendat22121995@gmail.com'] &&
                          request.resource.data.role != 'admin' &&
                          request.resource.data.role != 'superAdmin');
       allow delete: if isSuperAdmin() &&
-                       !(adminId in ['datpt60@fpt.edu.vn', 'phantiendat221295@gmail.com']);
+                       !(adminId in ['datpt60@fpt.edu.vn', 'phantiendat221295@gmail.com', 'phantiendat22121995@gmail.com']);
     }
 
     // ==========================================

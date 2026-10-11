@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import { Header } from './components/Header';
 import { Hero } from './components/Hero';
 import { CategorySection } from './components/CategorySection';
@@ -37,6 +38,7 @@ import {
   deleteAppFromFirestore,
   reorderAppsInFirestore,
   seedInitialAppsIfEmpty,
+  sortAppsByOrder,
   getAppsFromFirestore,
   subscribeTickets,
   saveTicketToFirestore,
@@ -196,11 +198,13 @@ export default function App() {
   // Admin App Editing Modal
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [editingApp, setEditingApp] = useState<WebAppItem | null>(null);
-  const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' | 'info' } | null>(null);
 
-  const showToast = (msg: string) => {
-    setToastMessage(msg);
-    setTimeout(() => setToastMessage(null), 3500);
+  const showToast = (message: string, type: 'success' | 'error' | 'info' = 'success') => {
+    setToast({ message, type });
+    setTimeout(() => {
+      setToast((prev) => (prev?.message === message ? null : prev));
+    }, 4000);
   };
 
   // CHẾ ĐỘ 2: BẮT ĐẦU ĐỒNG BỘ BỔ SUNG (Phân tích diff và mở bản xem trước)
@@ -767,7 +771,11 @@ export default function App() {
     let finalOrderIndex = updatedApp.orderIndex;
     if (typeof finalOrderIndex !== 'number') {
       const existingInCat = apps.filter((a) => a.category === updatedApp.category && a.id !== updatedApp.id);
-      finalOrderIndex = existingInCat.length;
+      const maxOrder = existingInCat.reduce(
+        (max, a) => Math.max(max, typeof a.orderIndex === 'number' ? a.orderIndex : -1),
+        -1
+      );
+      finalOrderIndex = maxOrder >= 0 ? maxOrder + 1 : existingInCat.length;
     }
 
     const appWithCustomFlag: WebAppItem = {
@@ -972,46 +980,12 @@ export default function App() {
     targetEmail: string,
     completed: boolean,
     isSuperAdminOverride: boolean
-  ) => {
+  ): Promise<NotificationItem> => {
     const actorEmail = (currentAdminUser?.email || '').toLowerCase().trim();
     const actorName = currentAdminUser?.name || actorEmail.split('@')[0];
 
-    // Cập nhật giao diện tức thì
-    let updatedNotiInstance: NotificationItem | null = null;
-    setNotifications((prev) =>
-      prev.map((n) => {
-        if (n.id === notificationId) {
-          const userChecklists = { ...(n.userChecklists || {}) };
-          userChecklists[targetEmail] = {
-            email: targetEmail,
-            name: userChecklists[targetEmail]?.name || targetEmail.split('@')[0],
-            completed,
-            completedAt: completed ? new Date().toISOString() : undefined,
-            completedBy: completed
-              ? isSuperAdminOverride
-                ? `Super Admin (${actorEmail})`
-                : actorEmail
-              : undefined,
-            updatedAt: new Date().toISOString()
-          };
-          const updated = {
-            ...n,
-            userChecklists,
-            updatedAt: new Date().toISOString()
-          };
-          updatedNotiInstance = updated;
-          return updated;
-        }
-        return n;
-      })
-    );
-
-    // Đồng bộ ngay với modal đang mở nếu có
-    if (updatedNotiInstance) {
-      setSelectedNotification(updatedNotiInstance);
-    }
-
     try {
+      // 1. Gửi trực tiếp lên Cloud Firestore trước
       await updateUserChecklistStatusInFirestore(
         notificationId,
         targetEmail,
@@ -1020,76 +994,143 @@ export default function App() {
         actorName,
         isSuperAdminOverride
       );
-      showToast(completed ? `Đã hoàn thành checklist cho ${targetEmail}!` : `Đã mở lại checklist cho ${targetEmail}!`);
+
+      // 2. Chỉ sau khi Firestore lưu thành công, cập nhật state chính thức
+      const targetNoti = notifications.find((n) => n.id === notificationId) || selectedNotification;
+      if (!targetNoti) throw new Error('Không tìm thấy thông báo tương ứng.');
+
+      const userChecklists = { ...(targetNoti.userChecklists || {}) };
+      const nowIso = new Date().toISOString();
+      const updatedStatus: Record<string, any> = {
+        email: targetEmail,
+        name: userChecklists[targetEmail]?.name || targetEmail.split('@')[0],
+        completed,
+        updatedAt: nowIso
+      };
+      if (completed) {
+        updatedStatus.completedAt = nowIso;
+        updatedStatus.completedBy = isSuperAdminOverride
+          ? `Super Admin (${actorEmail})`
+          : (currentAdminUser?.name ? `${currentAdminUser.name} (${actorEmail})` : actorEmail);
+      }
+      userChecklists[targetEmail] = updatedStatus as any;
+
+      const updatedNoti: NotificationItem = {
+        ...targetNoti,
+        userChecklists,
+        updatedAt: nowIso
+      };
+
+      setNotifications((prev) =>
+        prev.map((n) => (n.id === notificationId ? updatedNoti : n))
+      );
+      setSelectedNotification(updatedNoti);
+
+      try {
+        localStorage.setItem(
+          'fpt_portal_cached_notis',
+          JSON.stringify(notifications.map((n) => (n.id === notificationId ? updatedNoti : n)))
+        );
+      } catch {}
+
+      showToast(completed ? `Đã hoàn thành checklist cho ${targetEmail}!` : `Đã mở lại checklist cho ${targetEmail}!`, 'success');
+
+      if (sheetConfig.gasWebhookUrl) {
+        pushToGasWebhook(sheetConfig.gasWebhookUrl, {
+          action: 'updateUserChecklist',
+          notificationId,
+          userEmail: targetEmail,
+          completed,
+          completedBy: actorEmail
+        });
+      }
+
+      return updatedNoti;
     } catch (err: any) {
       console.error('Lỗi cập nhật checklist Firestore:', err);
-      const fresh = await getNotificationsFromFirestore();
-      setNotifications(fresh);
-      const freshItem = fresh.find((n) => n.id === notificationId);
-      if (freshItem) setSelectedNotification(freshItem);
+      showToast(`Lỗi cập nhật checklist: ${err?.message || 'Không thể lưu'}`, 'error');
       throw err;
-    }
-
-    if (sheetConfig.gasWebhookUrl) {
-      pushToGasWebhook(sheetConfig.gasWebhookUrl, {
-        action: 'updateUserChecklist',
-        notificationId,
-        userEmail: targetEmail,
-        completed,
-        completedBy: actorEmail
-      });
     }
   };
 
-  const handleToggleChecklistItem = async (notificationId: string, itemId: string) => {
-    const targetNoti = notifications.find((n) => n.id === notificationId);
-    if (!targetNoti || !targetNoti.checklist) return;
+  const handleToggleChecklistItem = async (
+    notificationId: string,
+    itemId: string
+  ): Promise<NotificationItem> => {
+    const targetNoti = notifications.find((n) => n.id === notificationId) || selectedNotification;
+    if (!targetNoti || !targetNoti.checklist) {
+      throw new Error('Không tìm thấy checklist công việc');
+    }
 
     const userEmail = currentAdminUser?.email || 'Admin';
+    const userName = currentAdminUser?.name;
+    const actorDisplayName = userName ? `${userName} (${userEmail})` : userEmail;
+    const nowIso = new Date().toISOString();
+
+    const targetItem = targetNoti.checklist.find((c) => c.id === itemId);
+    const nextCompleted = !targetItem?.completed;
+
     const nextChecklist = targetNoti.checklist.map((c) => {
       if (c.id === itemId) {
-        const nextCompleted = !c.completed;
-        return {
+        const updated: ChecklistItem = {
           ...c,
-          completed: nextCompleted,
-          completedBy: nextCompleted ? userEmail : undefined,
-          completedAt: nextCompleted ? new Date().toISOString() : undefined
+          completed: nextCompleted
         };
+        if (nextCompleted) {
+          updated.completedBy = actorDisplayName;
+          updated.completedAt = nowIso;
+        } else {
+          delete updated.completedBy;
+          delete updated.completedAt;
+        }
+        return updated;
       }
       return c;
     });
 
-    const updatedNoti: NotificationItem = {
-      ...targetNoti,
-      checklist: nextChecklist,
-      updatedAt: new Date().toISOString()
-    };
-
-    setNotifications((prev) =>
-      prev.map((n) => (n.id === notificationId ? updatedNoti : n))
-    );
-    setSelectedNotification(updatedNoti);
     try {
-      localStorage.setItem(
-        'fpt_portal_cached_notis',
-        JSON.stringify(notifications.map((n) => (n.id === notificationId ? updatedNoti : n)))
-      );
-    } catch {}
-
-    try {
-      await updateNotificationChecklistInFirestore(notificationId, nextChecklist);
-      showToast('Đã cập nhật trạng thái checklist công việc!');
-    } catch (err: any) {
-      console.error('Lỗi cập nhật checklist Firestore:', err);
-      throw err;
-    }
-
-    if (sheetConfig.gasWebhookUrl) {
-      pushToGasWebhook(sheetConfig.gasWebhookUrl, {
-        action: 'updateChecklist',
-        notificationId,
-        checklist: nextChecklist
+      // 1. Gửi lên Firestore trước
+      await updateNotificationChecklistInFirestore(notificationId, nextChecklist, {
+        actorEmail: userEmail,
+        actorName: userName,
+        taskTitle: targetItem?.text || itemId,
+        completed: nextCompleted
       });
+
+      // 2. Chỉ sau khi Firestore thành công mới cập nhật giao diện
+      const updatedNoti: NotificationItem = {
+        ...targetNoti,
+        checklist: nextChecklist,
+        updatedAt: nowIso
+      };
+
+      setNotifications((prev) =>
+        prev.map((n) => (n.id === notificationId ? updatedNoti : n))
+      );
+      setSelectedNotification(updatedNoti);
+
+      try {
+        localStorage.setItem(
+          'fpt_portal_cached_notis',
+          JSON.stringify(notifications.map((n) => (n.id === notificationId ? updatedNoti : n)))
+        );
+      } catch {}
+
+      showToast(nextCompleted ? 'Đã hoàn thành nhiệm vụ công việc!' : 'Đã mở lại nhiệm vụ công việc!', 'success');
+
+      if (sheetConfig.gasWebhookUrl) {
+        pushToGasWebhook(sheetConfig.gasWebhookUrl, {
+          action: 'updateChecklist',
+          notificationId,
+          checklist: nextChecklist
+        });
+      }
+
+      return updatedNoti;
+    } catch (err: any) {
+      console.error('Lỗi cập nhật checklist nhiệm vụ Firestore:', err);
+      showToast(`Lỗi cập nhật nhiệm vụ: ${err?.message || 'Không thể lưu'}`, 'error');
+      throw err;
     }
   };
 
@@ -1173,7 +1214,7 @@ export default function App() {
     const result: { category: string; items: WebAppItem[] }[] = [];
     Object.keys(groups).forEach((category) => {
       if (groups[category].length > 0 || currentRole === 'admin') {
-        result.push({ category, items: groups[category] });
+        result.push({ category, items: sortAppsByOrder(groups[category]) });
       }
     });
 
@@ -1535,12 +1576,36 @@ export default function App() {
         categories={existingCategories}
       />
 
-      {/* Global Toast Notification - z-[99999] hiển thị nổi lên trên tất cả modal */}
-      {toastMessage && (
-        <div className="fixed bottom-6 right-6 z-[99999] bg-slate-900/95 text-white text-xs sm:text-sm font-semibold px-4 py-3 rounded-2xl shadow-2xl flex items-center gap-2.5 animate-in slide-in-from-bottom-3 duration-200 border border-slate-700 backdrop-blur-xs pointer-events-auto">
-          <Check size={16} className="text-emerald-400 shrink-0" />
-          <span>{toastMessage}</span>
-        </div>
+      {/* Global Toast Notification - Render qua React Portal vào document.body để tuyệt đối không bị modal/backdrop che */}
+      {typeof document !== 'undefined' && toast && createPortal(
+        <div
+          role="status"
+          aria-live="polite"
+          className="fixed top-5 right-5 sm:top-6 sm:right-6 z-[9999999] max-w-md pointer-events-auto animate-in slide-in-from-top-3 duration-200"
+        >
+          <div
+            className={`flex items-center gap-3 px-4 py-3 rounded-2xl shadow-2xl border text-xs sm:text-sm font-semibold backdrop-blur-md ${
+              toast.type === 'error'
+                ? 'bg-rose-950/95 border-rose-600 text-rose-100 shadow-rose-950/50'
+                : 'bg-slate-950/95 border-slate-700 text-white shadow-black/60'
+            }`}
+          >
+            {toast.type === 'error' ? (
+              <ShieldAlert size={18} className="text-rose-400 shrink-0" />
+            ) : (
+              <Check size={18} className="text-emerald-400 shrink-0" />
+            )}
+            <span className="leading-snug">{toast.message}</span>
+            <button
+              type="button"
+              onClick={() => setToast(null)}
+              className="ml-auto text-slate-400 hover:text-white p-0.5 rounded cursor-pointer"
+            >
+              <X size={14} />
+            </button>
+          </div>
+        </div>,
+        document.body
       )}
     </div>
   );

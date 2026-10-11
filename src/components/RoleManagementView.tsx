@@ -84,7 +84,7 @@ interface RoleManagementViewProps {
   notifications?: NotificationItem[];
   onSaveNotification?: (item: NotificationItem) => Promise<void>;
   onDeleteNotification?: (id: string) => Promise<void>;
-  onToggleChecklistItem?: (notificationId: string, itemId: string) => Promise<void>;
+  onToggleChecklistItem?: (notificationId: string, itemId: string) => Promise<any> | any;
   onManualSyncFromSheets?: () => Promise<void>;
   isManualSyncing?: boolean;
   syncLogs?: SyncLogEntry[];
@@ -790,7 +790,7 @@ export const RoleManagementView: React.FC<RoleManagementViewProps> = ({
                       </span>
                     </div>
                     <p className="text-xs text-slate-500 mt-0.5">
-                      Chỉ 2 Super Admin khởi tạo (<span className="font-mono text-slate-700 font-semibold">datpt60@fpt.edu.vn</span> & <span className="font-mono text-slate-700 font-semibold">phantiendat221295@gmail.com</span>) mới có quyền cấp hoặc thu hồi quyền Admin.
+                      Chỉ Super Admin khởi tạo (<span className="font-mono text-slate-700 font-semibold">datpt60@fpt.edu.vn</span>, <span className="font-mono text-slate-700 font-semibold">phantiendat221295@gmail.com</span>, <span className="font-mono text-slate-700 font-semibold">phantiendat22121995@gmail.com</span>) mới có quyền cấp hoặc thu hồi quyền Admin.
                     </p>
                   </div>
                 </div>
@@ -1100,6 +1100,7 @@ export const RoleManagementView: React.FC<RoleManagementViewProps> = ({
                       <ul className="list-disc pl-5 space-y-0.5 text-slate-700 font-mono text-[11px]">
                         <li>datpt60@fpt.edu.vn (Super Admin)</li>
                         <li>phantiendat221295@gmail.com (Super Admin)</li>
+                        <li>phantiendat22121995@gmail.com (Super Admin)</li>
                         <li>thuanl2@fpt.edu.vn (Admin)</li>
                         <li>vylnu@fpt.edu.vn (Admin)</li>
                         <li>loiqt@fpt.edu.vn (Admin)</li>

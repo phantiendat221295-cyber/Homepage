@@ -84,15 +84,38 @@ export function handleFirestoreError(error: unknown, operationType: OperationTyp
   }
 }
 
-// Hàm lọc bỏ các trường mang giá trị `undefined` để Firestore không báo lỗi
-function sanitizeData<T extends Record<string, any>>(data: T): Partial<T> {
-  const sanitized: Record<string, any> = {};
-  for (const [key, value] of Object.entries(data)) {
-    if (value !== undefined) {
-      sanitized[key] = value;
-    }
+// Hàm lọc bỏ các trường mang giá trị `undefined` đệ quy để Firestore không bao giờ báo lỗi Unsupported field value
+export function deepSanitizeData<T>(data: T): T {
+  if (data === null || data === undefined) return data;
+  if (Array.isArray(data)) {
+    return data.map(deepSanitizeData) as unknown as T;
   }
-  return sanitized as Partial<T>;
+  if (typeof data === 'object') {
+    const sanitized: Record<string, any> = {};
+    for (const [key, value] of Object.entries(data as Record<string, any>)) {
+      if (value !== undefined) {
+        sanitized[key] = deepSanitizeData(value);
+      }
+    }
+    return sanitized as T;
+  }
+  return data;
+}
+
+export const sanitizeData = deepSanitizeData;
+
+/**
+ * Chuẩn hóa và sắp xếp danh sách tiện ích WebApp theo thứ tự ổn định:
+ * 1. orderIndex (ưu tiên số nhỏ hơn đứng trước)
+ * 2. Tiêu đề theo bảng chữ cái tiếng Việt (nếu chưa có orderIndex)
+ */
+export function sortAppsByOrder(apps: WebAppItem[]): WebAppItem[] {
+  return [...apps].sort((a, b) => {
+    const orderA = typeof a.orderIndex === 'number' ? a.orderIndex : 999999;
+    const orderB = typeof b.orderIndex === 'number' ? b.orderIndex : 999999;
+    if (orderA !== orderB) return orderA - orderB;
+    return (a.title || '').localeCompare(b.title || '', 'vi');
+  });
 }
 
 // Kiểm tra kết nối tới Firestore
@@ -191,59 +214,76 @@ export async function recordSystemAuditLog(entry: {
 
 /**
  * Lấy danh sách nhật ký kiểm toán hệ thống từ Firestore (Super Admin)
+ * Phân trang tối đa maxLimit (mặc định 50 bản ghi), sắp xếp mới nhất trước
+ * Xử lý an toàn dữ liệu cũ chưa có trường timestamp
  */
 export async function getSystemAuditLogsFromFirestore(
-  maxLimit = 150
+  maxLimit = 50
 ): Promise<SystemAuditLog[]> {
+  const colRef = collection(db, SYSTEM_AUDIT_LOGS_COLLECTION);
   try {
-    const colRef = collection(db, SYSTEM_AUDIT_LOGS_COLLECTION);
     const q = query(colRef, orderBy('timestamp', 'desc'), limit(maxLimit));
     const snapshot = await getDocs(q);
     const items: SystemAuditLog[] = [];
     snapshot.forEach((snap) => {
       items.push({ id: snap.id, ...(snap.data() as Omit<SystemAuditLog, 'id'>) });
     });
-    return items;
-  } catch {
-    // Fallback nếu index Firestore đang trong quá trình khởi tạo
+    return items.sort((a, b) => {
+      const timeA = a.timestamp ? new Date(a.timestamp).getTime() : 0;
+      const timeB = b.timestamp ? new Date(b.timestamp).getTime() : 0;
+      return (isNaN(timeB) ? 0 : timeB) - (isNaN(timeA) ? 0 : timeA);
+    });
+  } catch (err: any) {
+    console.warn('[Audit Log]: Thử truy vấn có giới hạn không cần composite index:', err?.message || err);
     try {
-      const colRef = collection(db, SYSTEM_AUDIT_LOGS_COLLECTION);
-      const snapshot = await getDocs(colRef);
+      const fallbackQuery = query(colRef, limit(maxLimit));
+      const snapshot = await getDocs(fallbackQuery);
       const items: SystemAuditLog[] = [];
       snapshot.forEach((snap) => {
         items.push({ id: snap.id, ...(snap.data() as Omit<SystemAuditLog, 'id'>) });
       });
-      return items
-        .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
-        .slice(0, maxLimit);
-    } catch (err2) {
-      handleFirestoreError(err2, OperationType.LIST, SYSTEM_AUDIT_LOGS_COLLECTION);
-      return [];
+      return items.sort((a, b) => {
+        const timeA = a.timestamp ? new Date(a.timestamp).getTime() : 0;
+        const timeB = b.timestamp ? new Date(b.timestamp).getTime() : 0;
+        return (isNaN(timeB) ? 0 : timeB) - (isNaN(timeA) ? 0 : timeA);
+      });
+    } catch (err2: any) {
+      console.error('[Audit Log Read Failed]:', err2);
+      throw err2;
     }
   }
 }
 
 /**
  * Đăng ký lắng nghe realtime nhật ký kiểm toán hệ thống (Super Admin)
+ * Giới hạn tối đa maxLimit (mặc định 50 bản ghi) để tránh tải toàn bộ collection không giới hạn
  */
 export function subscribeSystemAuditLogs(
   onUpdate: (logs: SystemAuditLog[]) => void,
-  onError?: (err: any) => void
+  onError?: (err: any) => void,
+  maxLimit = 50
 ): () => void {
   const colRef = collection(db, SYSTEM_AUDIT_LOGS_COLLECTION);
+  const q = query(colRef, orderBy('timestamp', 'desc'), limit(maxLimit));
   return onSnapshot(
-    colRef,
+    q,
     (snapshot) => {
       const items: SystemAuditLog[] = [];
       snapshot.forEach((snap) => {
         items.push({ id: snap.id, ...(snap.data() as Omit<SystemAuditLog, 'id'>) });
       });
-      items.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+      items.sort((a, b) => {
+        const timeA = a.timestamp ? new Date(a.timestamp).getTime() : 0;
+        const timeB = b.timestamp ? new Date(b.timestamp).getTime() : 0;
+        return (isNaN(timeB) ? 0 : timeB) - (isNaN(timeA) ? 0 : timeA);
+      });
       onUpdate(items);
     },
     (error) => {
-      handleFirestoreError(error, OperationType.GET, SYSTEM_AUDIT_LOGS_COLLECTION);
-      if (onError) onError(error);
+      console.warn('[Audit Log Realtime Error]:', error?.message || error);
+      if (onError) {
+        onError(error);
+      }
     }
   );
 }
@@ -255,7 +295,7 @@ export function subscribeSystemAuditLogs(
 export const APPS_COLLECTION = 'apps';
 
 /**
- * Lấy toàn bộ danh sách WebApps từ Firestore
+ * Lấy toàn bộ danh sách WebApps từ Firestore (đã chuẩn hóa sắp xếp)
  */
 export async function getAppsFromFirestore(): Promise<WebAppItem[]> {
   try {
@@ -265,7 +305,7 @@ export async function getAppsFromFirestore(): Promise<WebAppItem[]> {
     snapshot.forEach((docSnap) => {
       items.push({ id: docSnap.id, ...(docSnap.data() as Omit<WebAppItem, 'id'>) });
     });
-    return items;
+    return sortAppsByOrder(items);
   } catch (error) {
     handleFirestoreError(error, OperationType.LIST, APPS_COLLECTION);
     return [];
@@ -273,7 +313,7 @@ export async function getAppsFromFirestore(): Promise<WebAppItem[]> {
 }
 
 /**
- * Đăng ký lắng nghe thay đổi WebApps theo thời gian thực (Realtime onSnapshot)
+ * Đăng ký lắng nghe thay đổi WebApps theo thời gian thực (Realtime onSnapshot, đã sắp xếp)
  */
 export function subscribeApps(
   onUpdate: (apps: WebAppItem[]) => void,
@@ -287,7 +327,7 @@ export function subscribeApps(
       snapshot.forEach((docSnap) => {
         items.push({ id: docSnap.id, ...(docSnap.data() as Omit<WebAppItem, 'id'>) });
       });
-      onUpdate(items);
+      onUpdate(sortAppsByOrder(items));
     },
     (error) => {
       handleFirestoreError(error, OperationType.GET, APPS_COLLECTION);
@@ -829,17 +869,26 @@ export async function updateUserChecklistStatusInFirestore(
     const prevStatus = Boolean(currentChecklists[cleanTargetEmail]?.completed);
 
     const nowIso = new Date().toISOString();
-    const updatedStatus = {
+    const updatedStatus: Record<string, any> = {
       email: cleanTargetEmail,
       name: currentChecklists[cleanTargetEmail]?.name || cleanTargetEmail.split('@')[0],
-      uid: currentChecklists[cleanTargetEmail]?.uid || (cleanPerformedBy === cleanTargetEmail ? auth.currentUser?.uid : undefined),
       completed,
-      completedAt: completed ? nowIso : undefined,
-      completedBy: completed ? (isSuper && cleanPerformedBy !== cleanTargetEmail ? `Super Admin (${cleanPerformedBy})` : cleanPerformedBy) : undefined,
       updatedAt: nowIso
     };
 
-    currentChecklists[cleanTargetEmail] = updatedStatus;
+    const userUid = currentChecklists[cleanTargetEmail]?.uid || (cleanPerformedBy === cleanTargetEmail ? auth.currentUser?.uid : undefined);
+    if (userUid) {
+      updatedStatus.uid = userUid;
+    }
+
+    if (completed) {
+      updatedStatus.completedAt = nowIso;
+      updatedStatus.completedBy = (isSuper && cleanPerformedBy !== cleanTargetEmail)
+        ? `Super Admin (${cleanPerformedBy})`
+        : cleanPerformedBy;
+    }
+
+    currentChecklists[cleanTargetEmail] = deepSanitizeData(updatedStatus) as any;
 
     // Tạo bản ghi audit log
     const auditEntry = {
@@ -859,17 +908,21 @@ export async function updateUserChecklistStatusInFirestore(
     const currentAuditLogs = Array.isArray(notiData.auditLogs) ? [...notiData.auditLogs] : [];
     const updatedAuditLogs = [auditEntry, ...currentAuditLogs].slice(0, 50); // Giữ tối đa 50 log gần nhất
 
-    // 1. Cập nhật parent doc
-    await updateDoc(notiRef, {
+    // 1. Cập nhật parent doc (lọc sâu không để lọt trường undefined)
+    await updateDoc(notiRef, deepSanitizeData({
       userChecklists: currentChecklists,
       auditLogs: updatedAuditLogs,
       updatedAt: nowIso
-    });
+    }));
 
     // 2. Cập nhật subcollection /user_status/{cleanTargetEmail}
     try {
       const userStatusRef = doc(db, NOTIFICATIONS_COLLECTION, notificationId, 'user_status', cleanTargetEmail);
-      await setDoc(userStatusRef, sanitizeData(updatedStatus), { merge: true });
+      if (completed) {
+        await setDoc(userStatusRef, deepSanitizeData(updatedStatus), { merge: true });
+      } else {
+        await setDoc(userStatusRef, deepSanitizeData(updatedStatus));
+      }
     } catch {
       // ignore
     }
@@ -877,7 +930,7 @@ export async function updateUserChecklistStatusInFirestore(
     // 3. Ghi log vào subcollection /audit_logs/{auditEntry.id}
     try {
       const auditLogRef = doc(db, NOTIFICATIONS_COLLECTION, notificationId, 'audit_logs', auditEntry.id);
-      await setDoc(auditLogRef, sanitizeData(auditEntry));
+      await setDoc(auditLogRef, deepSanitizeData(auditEntry));
     } catch {
       // ignore
     }
@@ -888,7 +941,7 @@ export async function updateUserChecklistStatusInFirestore(
       targetType: 'notification',
       targetId: notificationId,
       targetTitle: notiData.title,
-      description: `${completed ? 'Đánh dấu hoàn thành' : 'Mở lại'} checklist cho "${cleanTargetEmail}" trong "${notiData.title}"${isSuperAdminOverride ? ' (Super Admin thao tác thay)' : ''}`,
+      description: `${completed ? 'Đánh dấu hoàn thành' : 'Mở lại'} checklist người nhận cho "${cleanTargetEmail}" trong "${notiData.title}"${isSuperAdminOverride ? ' (Super Admin thao tác thay)' : ''}`,
       performedBy: cleanPerformedBy,
       performedByName,
       changes: {
@@ -903,18 +956,41 @@ export async function updateUserChecklistStatusInFirestore(
 }
 
 /**
- * Cập nhật checklist của thông báo (Dành cho người được giao hoặc Admin)
+ * Cập nhật checklist nhiệm vụ của thông báo (Dành cho người được giao hoặc Super Admin)
  */
 export async function updateNotificationChecklistInFirestore(
   id: string,
-  checklist: any[]
+  checklist: any[],
+  auditInfo?: {
+    actorEmail?: string;
+    actorName?: string;
+    taskTitle?: string;
+    completed?: boolean;
+  }
 ): Promise<void> {
   const docRef = doc(db, NOTIFICATIONS_COLLECTION, id);
   try {
+    const sanitizedChecklist = deepSanitizeData(checklist);
+    const nowIso = new Date().toISOString();
     await updateDoc(docRef, {
-      checklist: checklist.map((c) => sanitizeData(c)),
-      updatedAt: new Date().toISOString()
+      checklist: sanitizedChecklist,
+      updatedAt: nowIso
     });
+
+    if (auditInfo) {
+      await recordSystemAuditLog({
+        action: 'TOGGLE_CHECKLIST',
+        targetType: 'notification',
+        targetId: id,
+        targetTitle: auditInfo.taskTitle || 'Nhiệm vụ',
+        description: `${auditInfo.completed ? 'Đánh dấu hoàn thành' : 'Mở lại'} nhiệm vụ "${auditInfo.taskTitle || id}"`,
+        performedBy: auditInfo.actorEmail || 'Admin',
+        performedByName: auditInfo.actorName,
+        changes: {
+          after: { completed: auditInfo.completed }
+        }
+      });
+    }
   } catch (error) {
     handleFirestoreError(error, OperationType.UPDATE, `${NOTIFICATIONS_COLLECTION}/${id}`);
     throw error;
@@ -1042,9 +1118,9 @@ export async function seedInitialNotificationsIfEmpty(
 export const ADMINS_COLLECTION = 'admin_users';
 
 // Quản trị viên cấp cao (Super Admin) duy nhất có quyền xem phân quyền, thêm hoặc thu hồi admin
-export const SYSTEM_SUPER_ADMINS = ['datpt60@fpt.edu.vn', 'phantiendat221295@gmail.com'];
+export const SYSTEM_SUPER_ADMINS = ['datpt60@fpt.edu.vn', 'phantiendat221295@gmail.com', 'phantiendat22121995@gmail.com'];
 
-// Danh sách 8 quản trị viên ban đầu (dùng khi Super Admin chủ động bấm Khôi phục mẫu)
+// Danh sách quản trị viên ban đầu (dùng khi Super Admin chủ động bấm Khôi phục mẫu)
 export const INITIAL_TEMPLATE_ADMINS: AdminAccount[] = [
   {
     email: 'datpt60@fpt.edu.vn',
@@ -1057,6 +1133,15 @@ export const INITIAL_TEMPLATE_ADMINS: AdminAccount[] = [
   },
   {
     email: 'phantiendat221295@gmail.com',
+    name: 'Phan Tiến Đạt',
+    role: 'admin',
+    status: 'active',
+    isSuperAdmin: true,
+    addedAt: '2025-01-01',
+    addedBy: 'Hệ thống'
+  },
+  {
+    email: 'phantiendat22121995@gmail.com',
     name: 'Phan Tiến Đạt',
     role: 'admin',
     status: 'active',
